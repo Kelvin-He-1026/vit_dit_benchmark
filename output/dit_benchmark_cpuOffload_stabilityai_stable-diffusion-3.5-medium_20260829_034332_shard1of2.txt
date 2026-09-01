@@ -1,0 +1,71 @@
+Timestamp  : 20260829_034332
+Model      : stabilityai/stable-diffusion-3.5-medium
+Device     : cpu
+Dtype      : bfloat16
+Samples    : 100
+Resolution : 1024x1024
+Steps      : 20
+Warmup     : 3
+Seed       : 42
+CPU offload: auto
+Threads    : 48
+Shard      : 1 of 2
+Loaded as  : torch.bfloat16
+Compile    : enabled (torch.compile on the transformer submodule)
+[001/050] 65.629 s/image
+[002/050] 64.695 s/image
+[003/050] 64.377 s/image
+[004/050] 65.444 s/image
+[005/050] 65.858 s/image
+[006/050] 65.558 s/image
+[007/050] 64.203 s/image
+[008/050] 64.125 s/image
+[009/050] 63.812 s/image
+[010/050] 65.313 s/image
+[011/050] 64.160 s/image
+[012/050] 64.877 s/image
+[013/050] 65.034 s/image
+[014/050] 65.439 s/image
+[015/050] 61.766 s/image
+[016/050] 64.883 s/image
+[017/050] 66.853 s/image
+[018/050] 62.314 s/image
+[019/050] 66.033 s/image
+[020/050] 65.857 s/image
+[021/050] 65.569 s/image
+[022/050] 64.984 s/image
+[023/050] 63.231 s/image
+[024/050] 63.326 s/image
+[025/050] 65.039 s/image
+[026/050] 64.748 s/image
+[027/050] 62.463 s/image
+[028/050] 64.267 s/image
+[029/050] 63.406 s/image
+[030/050] 65.070 s/image
+[031/050] 63.536 s/image
+[032/050] 65.076 s/image
+[033/050] 65.657 s/image
+[034/050] 63.158 s/image
+[035/050] 61.614 s/image
+[036/050] 64.715 s/image
+[037/050] 65.237 s/image
+[038/050] 61.267 s/image
+[039/050] 64.202 s/image
+[040/050] 65.488 s/image
+[041/050] 64.386 s/image
+[042/050] 64.698 s/image
+[043/050] 62.654 s/image
+[044/050] 65.535 s/image
+[045/050] 66.121 s/image
+[046/050] 64.330 s/image
+[047/050] 65.621 s/image
+[048/050] 62.831 s/image
+[049/050] 65.867 s/image
+[050/050] 61.359 s/image
+
+=== RESULT ===
+images              : 50
+total_generation_s  : 3221.6865
+avg_seconds_per_image: 64.4337
+images_per_second   : 0.015520
+denoising_steps_per_s: 0.310

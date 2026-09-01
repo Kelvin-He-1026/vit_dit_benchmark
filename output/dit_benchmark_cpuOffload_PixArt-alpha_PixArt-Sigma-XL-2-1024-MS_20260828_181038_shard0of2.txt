@@ -1,0 +1,71 @@
+Timestamp  : 20260828_181038
+Model      : PixArt-alpha/PixArt-Sigma-XL-2-1024-MS
+Device     : cpu
+Dtype      : bfloat16
+Samples    : 100
+Resolution : 1024x1024
+Steps      : 20
+Warmup     : 3
+Seed       : 42
+CPU offload: auto
+Threads    : 48
+Shard      : 0 of 2
+Loaded as  : torch.bfloat16
+Compile    : enabled (torch.compile on the transformer submodule)
+[001/050] 29.472 s/image
+[002/050] 28.887 s/image
+[003/050] 28.626 s/image
+[004/050] 29.089 s/image
+[005/050] 29.116 s/image
+[006/050] 28.370 s/image
+[007/050] 27.080 s/image
+[008/050] 27.200 s/image
+[009/050] 27.060 s/image
+[010/050] 28.065 s/image
+[011/050] 28.351 s/image
+[012/050] 27.260 s/image
+[013/050] 27.455 s/image
+[014/050] 27.451 s/image
+[015/050] 27.160 s/image
+[016/050] 28.155 s/image
+[017/050] 27.971 s/image
+[018/050] 27.575 s/image
+[019/050] 27.537 s/image
+[020/050] 27.500 s/image
+[021/050] 27.235 s/image
+[022/050] 27.338 s/image
+[023/050] 27.403 s/image
+[024/050] 27.288 s/image
+[025/050] 29.591 s/image
+[026/050] 29.600 s/image
+[027/050] 29.028 s/image
+[028/050] 29.004 s/image
+[029/050] 27.605 s/image
+[030/050] 27.558 s/image
+[031/050] 27.460 s/image
+[032/050] 27.922 s/image
+[033/050] 28.589 s/image
+[034/050] 29.438 s/image
+[035/050] 29.702 s/image
+[036/050] 28.271 s/image
+[037/050] 27.605 s/image
+[038/050] 29.535 s/image
+[039/050] 27.721 s/image
+[040/050] 28.848 s/image
+[041/050] 28.408 s/image
+[042/050] 27.427 s/image
+[043/050] 27.453 s/image
+[044/050] 27.477 s/image
+[045/050] 27.635 s/image
+[046/050] 29.317 s/image
+[047/050] 28.905 s/image
+[048/050] 27.381 s/image
+[049/050] 27.635 s/image
+[050/050] 29.108 s/image
+
+=== RESULT ===
+images              : 50
+total_generation_s  : 1406.8672
+avg_seconds_per_image: 28.1373
+images_per_second   : 0.035540
+denoising_steps_per_s: 0.711

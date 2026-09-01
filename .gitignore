@@ -1,0 +1,70 @@
+# ---- Datasets & model weights (huge, re-downloadable from HF) ----
+dataset/
+models/
+hf_home/
+hf_hub_cache/
+*.safetensors
+*.bin
+*.ckpt
+*.pt
+*.pth
+*.onnx
+*.gguf
+*.h5
+*.msgpack
+CACHEDIR.TAG
+
+# ---- Virtual environments ----
+cv_env/
+vllm_env/
+.venv/
+venv/
+env/
+ENV/
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+.ipynb_checkpoints/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---- Generated images / media from the diffusion benchmarks ----
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.gif
+*.mp4
+*.npy
+*.npz
+
+# ---- Logs & scratch ----
+*.log
+*.out
+*.err
+*.tmp
+*.lock
+nohup.out
+core.*
+
+# ---- Editor / OS ----
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ---- Secrets / local config ----
+.env
+.env.*
+*.pem
+*.key

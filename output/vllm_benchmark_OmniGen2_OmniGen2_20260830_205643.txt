@@ -1,0 +1,23 @@
+Timestamp  : 20260830_205643
+Runtime    : vllm-omni
+Model      : OmniGen2/OmniGen2
+Device     : cuda
+Dtype      : bfloat16
+Samples    : 3
+Resolution : 1024x1024
+Steps      : 20
+Warmup     : 1
+Seed       : 42
+Batched    : no
+Shard      : 0 of 1
+CPU offload: enabled
+[001/003] 32.931 s/image
+[002/003] 33.130 s/image
+[003/003] 33.188 s/image
+
+=== RESULT ===
+images              : 3
+total_generation_s  : 99.2494
+avg_seconds_per_image: 33.0831
+images_per_second   : 0.030227
+denoising_steps_per_s: 0.605
