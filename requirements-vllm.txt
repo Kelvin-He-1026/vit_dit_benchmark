@@ -1,0 +1,31 @@
+# vLLM benchmark only: vllm_dit_vit_benchmark.py
+#
+# Pinned to the versions in vllm_env. Python 3.12.
+#
+# Install into its OWN venv -- these pins conflict with requirements.txt
+# (transformers 5.x vs 4.x, huggingface_hub 1.x vs 0.x, torch 2.11 vs 2.13):
+#   python -m venv vllm_env
+#   ./vllm_env/bin/pip install -U -r requirements-vllm.txt
+#
+# Torch here is a CUDA 13.0 build; see requirements.txt for picking another.
+
+vllm-omni==0.26.0
+vllm==0.26.0
+
+torch==2.11.0
+torchvision==0.26.0
+
+transformers==5.16.1
+diffusers==0.38.0
+accelerate==1.12.0
+
+huggingface_hub==1.29.0
+hf-xet==1.6.0
+safetensors==0.8.0
+
+sentencepiece==0.2.2
+protobuf==6.33.6
+einops==0.8.2
+
+pillow==12.3.0
+numpy==2.3.5

@@ -1,12 +1,34 @@
-torch
-torchvision
+# Main benchmark harness: vit_benchmark.py, dit_benchmark_cpuOffload.py,
+# run_multisocket.py, consolidate_results.py
+#
+# Pinned to the versions in cv_env that produced the results in output/.
+# Python 3.12.
+#
+# NOTE: this file is NOT compatible with vllm_dit_vit_benchmark.py, which needs
+# transformers 5.x / huggingface_hub 1.x. Use requirements-vllm.txt in a
+# SEPARATE venv for that script.
+#
+# Torch here is a CUDA 13.0 build. For a different CUDA/CPU build, install torch
+# first from the matching index, e.g.:
+#   pip install torch==2.13.0 torchvision==0.28.0 --index-url https://download.pytorch.org/whl/cu130
+#   pip install torch==2.13.0 torchvision==0.28.0 --index-url https://download.pytorch.org/whl/cpu
+
+torch==2.13.0
+torchvision==0.28.0
+
 transformers==4.57.6
 diffusers==0.39.0
-accelerate
-datasets
-huggingface_hub
-safetensors
-sentencepiece
-protobuf
-ftfy
-pillow
+accelerate==1.14.0
+datasets==5.0.1
+
+huggingface_hub==0.36.2
+hf-xet==1.6.0
+safetensors==0.8.0
+
+# T5 text encoders used by PixArt-Sigma / SD3.5 / Sana
+sentencepiece==0.2.2
+protobuf==7.36.0
+ftfy==6.3.1
+
+pillow==12.3.0
+numpy==2.5.2

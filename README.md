@@ -2,10 +2,23 @@
 
 ## Install
 
+Two separate environments are required. The vLLM benchmark pins transformers 5.x
+and huggingface_hub 1.x, which cannot coexist with the 4.x / 0.x pins the
+diffusers-based scripts need.
+
+Main harness (`vit_benchmark.py`, `dit_benchmark_cpuOffload.py`,
+`run_multisocket.py`, `consolidate_results.py`):
+
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -U -r requirements.txt
+python -m venv cv_env
+./cv_env/bin/pip install -U -r requirements.txt
+```
+
+vLLM harness (`vllm_dit_vit_benchmark.py`) only:
+
+```bash
+python -m venv vllm_env
+./vllm_env/bin/pip install -U -r requirements-vllm.txt
 ```
 
 For ImageNet, first accept the terms on:
