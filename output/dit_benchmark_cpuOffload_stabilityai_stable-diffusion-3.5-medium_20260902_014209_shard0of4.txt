@@ -1,0 +1,47 @@
+Timestamp  : 20260902_014209
+Model      : stabilityai/stable-diffusion-3.5-medium
+Device     : cpu
+Dtype      : bfloat16
+Samples    : 100
+Resolution : 1024x1024
+Steps      : 20
+Warmup     : 3
+Seed       : 42
+CPU offload: auto
+Threads    : 64
+TF32       : disabled (matmul_precision=highest)
+Shard      : 0 of 4
+Loaded as  : torch.bfloat16
+Compile    : disabled
+[001/025] 145.822 s/image
+[002/025] 150.271 s/image
+[003/025] 146.725 s/image
+[004/025] 144.727 s/image
+[005/025] 141.473 s/image
+[006/025] 147.457 s/image
+[007/025] 138.838 s/image
+[008/025] 139.120 s/image
+[009/025] 145.740 s/image
+[010/025] 149.745 s/image
+[011/025] 148.880 s/image
+[012/025] 150.662 s/image
+[013/025] 144.004 s/image
+[014/025] 143.932 s/image
+[015/025] 140.093 s/image
+[016/025] 141.640 s/image
+[017/025] 139.703 s/image
+[018/025] 141.981 s/image
+[019/025] 148.307 s/image
+[020/025] 149.857 s/image
+[021/025] 144.540 s/image
+[022/025] 146.593 s/image
+[023/025] 145.934 s/image
+[024/025] 147.639 s/image
+[025/025] 147.970 s/image
+
+=== RESULT ===
+images              : 25
+total_generation_s  : 3631.6565
+avg_seconds_per_image: 145.2663
+images_per_second   : 0.006884
+denoising_steps_per_s: 0.138

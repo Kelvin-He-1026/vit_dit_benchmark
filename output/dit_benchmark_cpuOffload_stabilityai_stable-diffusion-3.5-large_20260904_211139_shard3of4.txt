@@ -1,0 +1,29 @@
+Timestamp  : 20260904_211139
+Model      : stabilityai/stable-diffusion-3.5-large
+Device     : cpu
+Dtype      : float32
+Samples    : 30
+Resolution : 1024x1024
+Steps      : 20
+Warmup     : 3
+Seed       : 42
+CPU offload: auto
+Threads    : 86
+TF32       : disabled (matmul_precision=highest)
+Shard      : 3 of 4
+Loaded as  : torch.float32
+Compile    : disabled
+[001/007] 578.357 s/image
+[002/007] 578.761 s/image
+[003/007] 576.639 s/image
+[004/007] 576.794 s/image
+[005/007] 577.477 s/image
+[006/007] 576.345 s/image
+[007/007] 577.754 s/image
+
+=== RESULT ===
+images              : 7
+total_generation_s  : 4042.1270
+avg_seconds_per_image: 577.4467
+images_per_second   : 0.001732
+denoising_steps_per_s: 0.035

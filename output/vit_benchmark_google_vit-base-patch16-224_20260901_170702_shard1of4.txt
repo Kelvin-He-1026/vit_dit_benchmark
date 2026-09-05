@@ -1,0 +1,19 @@
+Timestamp  : 20260901_170702
+Model      : google/vit-base-patch16-224
+Dataset    : ILSVRC/imagenet-1k
+Device     : cpu
+Dtype      : float32
+Samples    : 2000
+Batch size : 8
+Warmup     : 3
+Compile    : disabled
+Threads    : 86
+Shard      : 1 of 4
+
+=== RESULT ===
+images                  : 500
+forward_time_s          : 19.1625
+images_per_second       : 26.093
+avg_forward_ms_per_image: 38.325
+top1_correct            : 414
+top1_accuracy            : 0.8280

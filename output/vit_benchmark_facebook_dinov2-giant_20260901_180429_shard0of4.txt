@@ -1,0 +1,18 @@
+Timestamp  : 20260901_180429
+Model      : facebook/dinov2-giant
+Dataset    : ILSVRC/imagenet-1k
+Device     : cpu
+Dtype      : bfloat16
+Samples    : 2000
+Batch size : 86
+Warmup     : 3
+Compile    : enabled
+Threads    : 86
+Shard      : 0 of 4
+
+=== RESULT ===
+images                  : 500
+forward_time_s          : 48.7034
+images_per_second       : 10.266
+avg_forward_ms_per_image: 97.407
+top1_accuracy            : N/A (feature extractor; no classifier head)

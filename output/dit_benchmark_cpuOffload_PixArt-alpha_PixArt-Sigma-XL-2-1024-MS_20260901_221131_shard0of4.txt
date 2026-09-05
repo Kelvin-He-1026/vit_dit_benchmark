@@ -1,0 +1,47 @@
+Timestamp  : 20260901_221131
+Model      : PixArt-alpha/PixArt-Sigma-XL-2-1024-MS
+Device     : cpu
+Dtype      : bfloat16
+Samples    : 100
+Resolution : 1024x1024
+Steps      : 20
+Warmup     : 3
+Seed       : 42
+CPU offload: auto
+Threads    : 64
+TF32       : disabled (matmul_precision=highest)
+Shard      : 0 of 4
+Loaded as  : torch.bfloat16
+Compile    : disabled
+[001/025] 79.703 s/image
+[002/025] 79.645 s/image
+[003/025] 80.348 s/image
+[004/025] 79.972 s/image
+[005/025] 80.149 s/image
+[006/025] 80.090 s/image
+[007/025] 80.423 s/image
+[008/025] 80.468 s/image
+[009/025] 79.639 s/image
+[010/025] 80.560 s/image
+[011/025] 79.689 s/image
+[012/025] 80.296 s/image
+[013/025] 80.459 s/image
+[014/025] 80.260 s/image
+[015/025] 80.758 s/image
+[016/025] 80.055 s/image
+[017/025] 80.608 s/image
+[018/025] 79.699 s/image
+[019/025] 80.519 s/image
+[020/025] 80.540 s/image
+[021/025] 80.673 s/image
+[022/025] 80.122 s/image
+[023/025] 77.781 s/image
+[024/025] 78.479 s/image
+[025/025] 79.248 s/image
+
+=== RESULT ===
+images              : 25
+total_generation_s  : 2000.1828
+avg_seconds_per_image: 80.0073
+images_per_second   : 0.012499
+denoising_steps_per_s: 0.250
