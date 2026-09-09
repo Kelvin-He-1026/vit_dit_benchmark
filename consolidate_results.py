@@ -130,6 +130,7 @@ GROUP_FIELDS = (
 
 def script_name(filename):
     for prefix, name in (
+        ("server_vit_", "server_vit_benchmark"),
         ("vllm_sla_", "vllm_sla_sweep"),
         ("vllm_benchmark_", "vllm_dit_vit_benchmark"),
         ("dit_benchmark_cpuOffload_", "dit_benchmark_cpuOffload"),
