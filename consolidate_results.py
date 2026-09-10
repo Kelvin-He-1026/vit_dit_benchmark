@@ -69,6 +69,11 @@ METRIC_FIELDS = [
     "top1_correct",
     "top1_accuracy",
     "max_concurrent_users",
+    "cpu_cores_busy_mean",
+    "sys_cpu_pct_mean",
+    "gpu_util_pct_mean",
+    "gpu_power_w_mean",
+    "gpu_mem_used_gib_max",
 ]
 
 PROVENANCE_FIELDS = [
@@ -87,6 +92,11 @@ KEY_MAP = {
     "Batched": "batched",
     "Diff batch": "diffusion_batch_size",
     "max_concurrent_users": "max_concurrent_users",
+    "cpu_cores_busy_mean": "cpu_cores_busy_mean",
+    "sys_cpu_pct_mean": "sys_cpu_pct_mean",
+    "gpu_util_pct_mean": "gpu_util_pct_mean",
+    "gpu_power_w_mean": "gpu_power_w_mean",
+    "gpu_mem_used_gib_max": "gpu_mem_used_gib_max",
     "sla_seconds": "sla_seconds",
     "sla_percentile": "sla_percentile",
     "Loaded as": "loaded_dtype",
@@ -222,6 +232,14 @@ def pool(shards):
     # SLA sweeps report a capacity figure instead of throughput metrics.
     if first.get("max_concurrent_users"):
         row["max_concurrent_users"] = first["max_concurrent_users"]
+
+    # Resource counters, from server_vit_benchmark.py. Taken from the first
+    # shard rather than pooled: that script does not shard, and utilisation is
+    # a whole-machine reading that would be double-counted by summing anyway.
+    for f in ("cpu_cores_busy_mean", "sys_cpu_pct_mean", "gpu_util_pct_mean",
+              "gpu_power_w_mean", "gpu_mem_used_gib_max"):
+        if first.get(f):
+            row[f] = first[f]
 
     images = [int(s["images"]) for s in shards if s.get("images", "").isdigit()]
     total_images = sum(images)

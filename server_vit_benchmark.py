@@ -106,6 +106,7 @@ import io
 import os
 import random
 import statistics
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -137,6 +138,8 @@ from datasets import load_dataset
 from PIL import Image
 from transformers import AutoImageProcessor, AutoModel, AutoModelForImageClassification
 
+torch.set_num_threads(1)
+torch.set_num_interop_threads(1)
 
 def parse_args():
     p = argparse.ArgumentParser(
@@ -152,6 +155,21 @@ def parse_args():
         help="torch.set_num_threads() for CPU inference. Together with "
         "--preprocess-workers this partitions the machine; see the module "
         "docstring. Defaults to PyTorch's own default (all logical CPUs).",
+    )
+    p.add_argument(
+        "--image-processor",
+        choices=["slow", "fast"],
+        default="slow",
+        help="transformers image-processor backend: 'slow' is the PIL/numpy "
+        "path, 'fast' the torchvision one. Defaults to slow, which is also "
+        "what vit_benchmark.py gets, because 'fast' is a footgun here: it "
+        "runs torch ops inside every --preprocess-workers thread, and each of "
+        "those spawns its own intra-op pool. Measured on this box at 200 "
+        "req/s, ViT-B, 16 workers: slow p95 85 ms; fast p95 150 ms at the "
+        "default 172 torch threads; fast p95 83 ms once --threads was capped "
+        "at 4. So fast only wins if you constrain --threads, and never by "
+        "much. Whichever you pick is logged as part of the result - the two "
+        "are not comparable.",
     )
     p.add_argument(
         "--compile",
@@ -249,6 +267,19 @@ def parse_args():
         "(default 256).",
     )
     m.add_argument("--seed", type=int, default=42)
+    m.add_argument(
+        "--sample-interval-ms",
+        type=float,
+        default=250.0,
+        help="How often to poll CPU/GPU counters (default 250). NVML refreshes "
+        "its utilisation figure only every 1/6 to 1 second, so polling much "
+        "faster than this just re-reads the same value.",
+    )
+    m.add_argument(
+        "--no-resource-monitor",
+        action="store_true",
+        help="Skip CPU/GPU sampling entirely.",
+    )
 
     sw = p.add_argument_group("sweep")
     sw.add_argument(
@@ -348,6 +379,193 @@ class Record:
     @property
     def infer_s(self):
         return self.done - self.batch_started
+
+
+# ---------------------------------------------------------------------------
+# Resource monitoring
+#
+# psutil for the host, NVML for the device. Two semantics from those APIs drive
+# the design here, and both are easy to get wrong:
+#
+# psutil.Process.cpu_percent(interval=None) returns usage *since the previous
+#   call on the same Process instance*. The instance carries the state, so it
+#   must be reused, and the first call is documented as a meaningless 0.0 that
+#   the caller is supposed to discard. Both are handled in _prime(). The value
+#   is also not capped at 100: a process spanning several cores reports the sum,
+#   so on this 172-core box a fully busy run reads up to 17200%. That is why
+#   cpu_cores_busy (percent/100) is reported alongside - on a many-core Xeon it
+#   is the only form of the number anyone can read.
+#
+# nvmlUtilization_t.gpu is "percent of time over the past sample period during
+#   which one or more kernels was executing", with a sample period NVIDIA
+#   documents as between 1 second and 1/6 second depending on the product. It is
+#   NOT SM occupancy, and for this benchmark that distinction is severe: a ViT-B
+#   batch runs in about a millisecond, so at any sustained arrival rate at least
+#   one kernel is resident during every sample period and this field pins at
+#   ~100% while the SMs sit mostly idle. Read it as a duty cycle, not as
+#   efficiency. Power draw and SM clock are the honest proxies for how much work
+#   the GPU is actually doing, which is why both are collected.
+# ---------------------------------------------------------------------------
+
+try:
+    import psutil
+except ImportError:  # pragma: no cover - optional dependency
+    psutil = None
+
+try:
+    import pynvml
+except ImportError:  # pragma: no cover - optional dependency
+    pynvml = None
+
+
+@dataclass
+class ResourceSample:
+    t: float
+    cpu_pct: float = float("nan")        # process, summed across cores
+    sys_cpu_pct: float = float("nan")    # system-wide, 0-100
+    rss_gib: float = float("nan")
+    threads: int = 0
+    gpu_util_pct: float = float("nan")
+    gpu_mem_util_pct: float = float("nan")
+    gpu_mem_used_gib: float = float("nan")
+    gpu_power_w: float = float("nan")
+    gpu_sm_clock_mhz: float = float("nan")
+    gpu_temp_c: float = float("nan")
+
+
+class ResourceSampler(threading.Thread):
+    """Polls host and device counters on a dedicated thread.
+
+    Deliberately a thread rather than an asyncio task. An async sampler would
+    stop sampling at exactly the moment the event loop saturates - which is the
+    moment the data matters most - and its own wakeups would add to the harness
+    lag the benchmark is trying to measure. A daemon thread keeps sampling
+    through loop congestion, and the NVML/psutil calls are blocking anyway.
+
+    Samples are collected continuously across the whole sweep and sliced per
+    level by timestamp, the same way queue-depth samples are.
+    """
+
+    def __init__(self, interval_s, gpu_uuid=None, log=print):
+        super().__init__(daemon=True, name="resmon")
+        self.interval_s = interval_s
+        self.samples = []
+        # NOT self._stop: threading.Thread.join() calls its own private
+        # self._stop() during teardown, so that name collides and breaks join.
+        self._stop_event = threading.Event()
+        self.gpu_name = None
+
+        self.proc = psutil.Process() if psutil is not None else None
+        if psutil is None:
+            log("Resource monitor: psutil not installed, host metrics disabled")
+
+        self.handle = None
+        if pynvml is not None and gpu_uuid is not None:
+            try:
+                pynvml.nvmlInit()
+                self.handle = self._find_by_uuid(gpu_uuid)
+                name = pynvml.nvmlDeviceGetName(self.handle)
+                self.gpu_name = name.decode() if isinstance(name, bytes) else name
+            except Exception as exc:  # noqa: BLE001 - monitoring is best-effort
+                log(f"Resource monitor: NVML unavailable ({exc}); GPU metrics disabled")
+                self.handle = None
+        elif gpu_uuid is not None:
+            log("Resource monitor: nvidia-ml-py not installed, GPU metrics disabled")
+
+    @staticmethod
+    def _find_by_uuid(gpu_uuid):
+        """Bind to the exact device torch is using.
+
+        Matching on UUID rather than on index because NVML indexes all physical
+        GPUs while torch indexes only the CUDA_VISIBLE_DEVICES subset - so on a
+        multi-GPU box torch device 0 is often not NVML device 0, and an
+        index-based lookup would happily report a completely idle neighbour.
+        """
+        want = str(gpu_uuid).lower().replace("gpu-", "")
+        for i in range(pynvml.nvmlDeviceGetCount()):
+            h = pynvml.nvmlDeviceGetHandleByIndex(i)
+            uuid = pynvml.nvmlDeviceGetUUID(h)
+            uuid = uuid.decode() if isinstance(uuid, bytes) else uuid
+            if uuid.lower().replace("gpu-", "") == want:
+                return h
+        raise RuntimeError(f"no NVML device matches torch UUID {gpu_uuid}")
+
+    def _prime(self):
+        # Both cpu_percent entry points return a meaningless 0.0 on their first
+        # call and measure "since last call" thereafter. Burn that first call
+        # here so no sample in the record is the bogus one.
+        if self.proc is not None:
+            self.proc.cpu_percent(None)
+            psutil.cpu_percent(None)
+
+    def _sample(self):
+        s = ResourceSample(t=time.perf_counter())
+        if self.proc is not None:
+            s.cpu_pct = self.proc.cpu_percent(None)
+            s.sys_cpu_pct = psutil.cpu_percent(None)
+            s.rss_gib = self.proc.memory_info().rss / (1024 ** 3)
+            s.threads = self.proc.num_threads()
+        if self.handle is not None:
+            try:
+                u = pynvml.nvmlDeviceGetUtilizationRates(self.handle)
+                s.gpu_util_pct = float(u.gpu)
+                s.gpu_mem_util_pct = float(u.memory)
+                s.gpu_mem_used_gib = (
+                    pynvml.nvmlDeviceGetMemoryInfo(self.handle).used / (1024 ** 3)
+                )
+                s.gpu_power_w = pynvml.nvmlDeviceGetPowerUsage(self.handle) / 1000.0
+                s.gpu_sm_clock_mhz = float(
+                    pynvml.nvmlDeviceGetClockInfo(self.handle, pynvml.NVML_CLOCK_SM)
+                )
+                s.gpu_temp_c = float(
+                    pynvml.nvmlDeviceGetTemperature(
+                        self.handle, pynvml.NVML_TEMPERATURE_GPU
+                    )
+                )
+            except Exception:  # noqa: BLE001 - never let monitoring kill a run
+                pass
+        return s
+
+    def run(self):
+        self._prime()
+        while not self._stop_event.wait(self.interval_s):
+            self.samples.append(self._sample())
+
+    def stop(self):
+        self._stop_event.set()
+        self.join(timeout=5.0)
+        if pynvml is not None and self.handle is not None:
+            try:
+                pynvml.nvmlShutdown()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def summarize(self, t_start, t_end):
+        """Mean and peak of each counter over one measurement window."""
+        rows = [s for s in self.samples if t_start <= s.t < t_end]
+        out = {"resource_samples": len(rows)}
+        if not rows:
+            return out
+
+        def agg(attr, peak=True):
+            vals = [getattr(r, attr) for r in rows]
+            vals = [v for v in vals if v == v]  # drop NaN
+            if not vals:
+                return
+            out[f"{attr}_mean"] = statistics.fmean(vals)
+            if peak:
+                out[f"{attr}_max"] = max(vals)
+
+        for f in ("cpu_pct", "sys_cpu_pct", "rss_gib", "gpu_util_pct",
+                  "gpu_mem_util_pct", "gpu_mem_used_gib", "gpu_power_w",
+                  "gpu_sm_clock_mhz", "gpu_temp_c"):
+            agg(f)
+        out["threads_max"] = max(r.threads for r in rows)
+        if "cpu_pct_mean" in out:
+            # The only readable form on a 172-core box.
+            out["cpu_cores_busy_mean"] = out["cpu_pct_mean"] / 100.0
+            out["cpu_cores_busy_max"] = out["cpu_pct_max"] / 100.0
+        return out
 
 
 class InferenceServer:
@@ -646,7 +864,7 @@ def _slope(points):
     return sum((x - mx) * (y - my) for x, y in points) / denom
 
 
-def score_level(records, depth_samples, t0, args, is_dino):
+def score_level(records, depth_samples, t0, args, is_dino, sampler=None):
     """Reduce one level's records to a verdict plus the diagnostics behind it.
 
     Only requests SCHEDULED inside the measurement window count. Filtering on
@@ -748,6 +966,9 @@ def score_level(records, depth_samples, t0, args, is_dino):
         )
     else:
         out["reason"] = "ok"
+
+    if sampler is not None:
+        out.update(sampler.summarize(win_start, win_end))
 
     if not is_dino:
         graded = [r for r in window if r.pred >= 0]
@@ -897,6 +1118,7 @@ def main():
     log(f"Measure    : {args.measure_s:g} s per level")
     log(f"Seed       : {args.seed}")
     log(f"Compile    : {'enabled' if args.compile else 'disabled'}")
+    log(f"Processor  : {args.image_processor}")
     log(f"Threads    : {torch.get_num_threads()}")
     log(f"Self-test  : {'enabled (no-op server)' if args.selftest else 'disabled'}")
 
@@ -928,7 +1150,9 @@ def main():
         server = NullServer()
     else:
         processor = AutoImageProcessor.from_pretrained(
-            args.model, cache_dir=str(MODELS_DIR), user_fast = True
+            args.model,
+            cache_dir=str(MODELS_DIR),
+            use_fast=(args.image_processor == "fast"),
         )
         if is_dino:
             model = AutoModel.from_pretrained(args.model, cache_dir=str(MODELS_DIR))
@@ -956,6 +1180,27 @@ def main():
         )
         warm_buckets(server, payloads[0], buckets, 3 if args.compile else 1, log)
 
+    # Bind the monitor to the exact GPU torch chose, by UUID - see
+    # ResourceSampler._find_by_uuid for why index-based lookup is wrong here.
+    gpu_uuid = None
+    if args.device == "cuda" and not args.selftest:
+        gpu_uuid = getattr(
+            torch.cuda.get_device_properties(torch.cuda.current_device()),
+            "uuid",
+            None,
+        )
+
+    sampler = None
+    if not args.no_resource_monitor:
+        sampler = ResourceSampler(
+            args.sample_interval_ms / 1000.0, gpu_uuid=gpu_uuid, log=log
+        )
+        log(f"Monitor    : host={'psutil' if sampler.proc else 'off'} "
+            f"device={sampler.gpu_name or 'off'} "
+            f"every {args.sample_interval_ms:g} ms")
+    else:
+        log("Monitor    : disabled")
+
     duration = args.warmup_s + args.measure_s
 
     async def probe(level):
@@ -968,7 +1213,7 @@ def main():
             return {"passed": False, "reason": "empty schedule", "n_window": 0}
 
         records, depths, t0 = await run_level(server, offsets, payloads, labels)
-        res = score_level(records, depths, t0, args, is_dino)
+        res = score_level(records, depths, t0, args, is_dino, sampler)
         res["level"] = level
         shown = f"{int(round(level))}" if is_video else f"{level:.2f}"
         log(f"[{shown:>8} {unit}] n={res['n_window']:>6}  "
@@ -976,6 +1221,8 @@ def main():
             f"p95={res.get('p95_ms', float('nan')):8.1f}  "
             f"p99={res.get('p99_ms', float('nan')):8.1f} ms  "
             f"batch={res.get('mean_batch', 0):5.1f}  "
+            f"cpu={res.get('cpu_cores_busy_mean', float('nan')):5.1f}c  "
+            f"gpu={res.get('gpu_util_pct_mean', float('nan')):5.1f}%  "
             f"{'PASS' if res['passed'] else 'FAIL'}  {res['reason']}")
         return res
 
@@ -1012,7 +1259,13 @@ def main():
 
     log("")
     log(f"=== SWEEP ({unit}) ===")
-    best, best_res, history, capped = asyncio.run(driver())
+    if sampler is not None:
+        sampler.start()
+    try:
+        best, best_res, history, capped = asyncio.run(driver())
+    finally:
+        if sampler is not None:
+            sampler.stop()
 
     log("")
     log("=== RESULT ===")
@@ -1075,6 +1328,37 @@ def main():
         log(f"    preprocess_ms       : {best_res['preprocess_p95_ms']:.2f}")
         log(f"    queue_wait_ms       : {best_res['queue_wait_p95_ms']:.2f}")
         log(f"    inference_ms        : {best_res['infer_p95_ms']:.2f}")
+        if best_res.get("resource_samples"):
+            log("")
+            log(f"  resources ({best_res['resource_samples']} samples over the window):")
+            if "cpu_cores_busy_mean" in best_res:
+                # Trailing prose would end up inside the CSV value, since
+                # consolidate_results.py takes everything after the first
+                # colon. Keep every logged metric line strictly "key : number".
+                log(f"    cpu_logical_count   : {psutil.cpu_count()}")
+                log(f"    cpu_cores_busy_mean : {best_res['cpu_cores_busy_mean']:.2f}")
+                log(f"    cpu_cores_busy_max  : {best_res['cpu_cores_busy_max']:.2f}")
+                log(f"    proc_cpu_pct_mean   : {best_res['cpu_pct_mean']:.1f}")
+                log(f"    sys_cpu_pct_mean    : {best_res['sys_cpu_pct_mean']:.1f}")
+                log(f"    rss_gib_max         : {best_res['rss_gib_max']:.2f}")
+                log(f"    threads_max         : {best_res['threads_max']}")
+            if "gpu_util_pct_mean" in best_res:
+                log(f"    gpu_util_pct_mean   : {best_res['gpu_util_pct_mean']:.1f}")
+                log(f"    gpu_mem_util_pct_mean: {best_res['gpu_mem_util_pct_mean']:.1f}")
+                log(f"    gpu_mem_used_gib_max: {best_res['gpu_mem_used_gib_max']:.2f}")
+                log(f"    gpu_power_w_mean    : {best_res['gpu_power_w_mean']:.1f}")
+                log(f"    gpu_power_w_max     : {best_res['gpu_power_w_max']:.1f}")
+                log(f"    gpu_sm_clock_mhz_mean: {best_res['gpu_sm_clock_mhz_mean']:.0f}")
+                log(f"    gpu_temp_c_max      : {best_res['gpu_temp_c_max']:.0f}")
+                log("    NOTE: gpu_util_pct is NVML's duty cycle - percent of "
+                    "time in which at least")
+                log("          one kernel was resident - NOT SM occupancy. It "
+                    "can read near 100% on a")
+                log("          GPU that is mostly idle between short kernels, "
+                    "so treat power draw and")
+                log("          SM clock as the honest signal of how much work "
+                    "is actually happening.")
+
         if not is_dino and best_res.get("top1_total"):
             # Not a headline metric - a tripwire. If the served path's accuracy
             # drifts from vit_benchmark.py's, preprocessing or padding is
