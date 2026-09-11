@@ -61,6 +61,8 @@ import torch
 from datasets import load_dataset
 from transformers import AutoImageProcessor, AutoModel, AutoModelForImageClassification
 
+import hostinfo
+
 
 def parse_args():
     p = argparse.ArgumentParser()
@@ -154,6 +156,10 @@ def main():
     log(f"Model      : {args.model}")
     log(f"Dataset    : {DATASET_NAME}")
     log(f"Device     : {args.device}")
+    log(f"Server     : {hostinfo.server_sku()}")
+    log(f"CPU        : {hostinfo.cpu_sku()}")
+    log(f"CPU cores  : {hostinfo.cpu_topology()}")
+    log(f"GPU        : {hostinfo.gpu_sku()}")
     log(f"Dtype      : {args.dtype}")
     log(f"Samples    : {args.samples}")
     log(f"Batch size : {args.batch_size}")

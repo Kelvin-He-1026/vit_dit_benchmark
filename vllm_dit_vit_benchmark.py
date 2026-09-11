@@ -95,6 +95,8 @@ os.environ.setdefault("HF_HUB_CACHE", str(HF_HUB_CACHE_DIR))
 
 from huggingface_hub import hf_hub_download
 
+import hostinfo
+
 
 def parse_args():
     p = argparse.ArgumentParser()
@@ -264,6 +266,10 @@ def main():
     log(f"Runtime    : vllm-omni")
     log(f"Model      : {args.model}")
     log(f"Device     : cuda")
+    log(f"Server     : {hostinfo.server_sku()}")
+    log(f"CPU        : {hostinfo.cpu_sku()}")
+    log(f"CPU cores  : {hostinfo.cpu_topology()}")
+    log(f"GPU        : {hostinfo.gpu_sku()}")
     log(f"Dtype      : {args.dtype}")
     log(f"Samples    : {args.samples}")
     log(f"Resolution : {args.width}x{args.height}")

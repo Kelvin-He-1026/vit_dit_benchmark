@@ -85,6 +85,8 @@ from diffusers import DiffusionPipeline
 from huggingface_hub import hf_hub_download
 from huggingface_hub.errors import GatedRepoError
 
+import hostinfo
+
 
 def parse_args():
     p = argparse.ArgumentParser()
@@ -220,6 +222,10 @@ def main():
     log(f"Timestamp  : {timestamp}")
     log(f"Model      : {args.model}")
     log(f"Device     : {args.device}")
+    log(f"Server     : {hostinfo.server_sku()}")
+    log(f"CPU        : {hostinfo.cpu_sku()}")
+    log(f"CPU cores  : {hostinfo.cpu_topology()}")
+    log(f"GPU        : {hostinfo.gpu_sku()}")
     log(f"Dtype      : {args.dtype}")
     log(f"Samples    : {args.samples}")
     log(f"Resolution : {args.width}x{args.height}")

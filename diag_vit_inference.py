@@ -51,6 +51,8 @@ from PIL import Image
 from torch.cuda import nvtx
 from transformers import AutoImageProcessor, AutoModel, AutoModelForImageClassification
 
+import hostinfo
+
 torch.set_num_threads(2)
 # set_num_interop_threads may only be called once per process; the import
 # above already did it.
@@ -372,7 +374,10 @@ def main():
     log(f"Timestamp  : {timestamp}")
     log(f"Script     : diag_vit_inference")
     log(f"Model      : {args.model}")
-    log(f"GPU        : {torch.cuda.get_device_name()}")
+    log(f"Server     : {hostinfo.server_sku()}")
+    log(f"CPU        : {hostinfo.cpu_sku()}")
+    log(f"CPU cores  : {hostinfo.cpu_topology()}")
+    log(f"GPU        : {hostinfo.gpu_sku()}")
     log(f"Dtype      : {args.dtype}")
     log(f"Input      : pre-decoded tensors (no JPEG preprocessing timed)")
     log(f"Pre workers: {args.preprocess_workers}")

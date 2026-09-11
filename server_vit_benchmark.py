@@ -138,7 +138,9 @@ from datasets import load_dataset
 from PIL import Image
 from transformers import AutoImageProcessor, AutoModel, AutoModelForImageClassification
 
-torch.set_num_threads(1)
+import hostinfo
+
+torch.set_num_threads(2)
 torch.set_num_interop_threads(1)
 
 def parse_args():
@@ -1103,6 +1105,10 @@ def main():
     log(f"Model      : {args.model}")
     log(f"Dataset    : {DATASET_NAME}")
     log(f"Device     : {args.device}")
+    log(f"Server     : {hostinfo.server_sku()}")
+    log(f"CPU        : {hostinfo.cpu_sku()}")
+    log(f"CPU cores  : {hostinfo.cpu_topology()}")
+    log(f"GPU        : {hostinfo.gpu_sku()}")
     log(f"Dtype      : {args.dtype}")
     log(f"Workload   : {args.workload}")
     if is_video:
