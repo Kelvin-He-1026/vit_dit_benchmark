@@ -42,19 +42,34 @@ host_source says how the short labels for a row were arrived at:
   logged    the run recorded its own hardware.
   inferred  identified from the GPU its monitor named, or from its logical
             core count, both of which distinguish the two machines here.
-  assumed   nothing in the file identifies the hardware, so it is attributed
-            to DEFAULT_HOST. Filter on host_source to exclude these if a
-            comparison depends on the hardware being right.
+  probed    nothing in the file identifies the hardware, so it is attributed
+            to THIS machine, read live from lscpu and nvidia-smi. That is a
+            guess about provenance - it is only right if the tree being
+            consolidated was produced by the box doing the consolidating.
+  assumed   same, but the live probe came up empty too, so the hardcoded
+            FALLBACK_HOST was used.
+
+Filter on host_source to exclude probed/assumed rows if a comparison depends
+on the hardware being right.
 """
 
 import csv
+import functools
+import os
 import re
 from collections import defaultdict
 from pathlib import Path
 
+import hostinfo
+
 BASE_DIR = Path(__file__).resolve().parent
-OUTPUT_DIR = BASE_DIR / "output"
-CSV_PATH = OUTPUT_DIR / "consolidated_results.csv"
+# One results tree per machine, matching the benchmark scripts. Everything
+# under it is scanned recursively, so the per-script subfolders (vit_output,
+# dit_output, server_vit_output, server_dit_output, diag_output) need no
+# enumerating here - a new one is picked up as soon as it has files in it.
+OUTPUT_ROOT = Path(os.environ.get("BENCH_OUTPUT_ROOT",
+                                  BASE_DIR / "output_SR630_6740_L4"))
+CSV_PATH = OUTPUT_ROOT / "consolidated_results.csv"
 
 # Arguments/config first, then measurements, then provenance.
 ARG_FIELDS = [
@@ -296,10 +311,35 @@ KNOWN_HOSTS = (
 
 # Runs predating host logging record no hardware whatsoever - no GPU name, no
 # machine-wide core count, only a per-shard thread count that says nothing
-# about which box it was. Operator's attribution is the SR630 V4. This is a
-# stated assumption, not a measurement: such rows are marked host_source
-# "assumed" so they can be excluded from any hardware comparison.
-DEFAULT_HOST = ("SR630 V4", "6740P", "L4")
+# about which box it was. Those are attributed to the machine running this
+# script, read live from DMI, lscpu and nvidia-smi.
+#
+# The measurement is of this box; the attribution of those rows to it is still
+# a guess, and a wrong one if you consolidate an SR630 tree while sitting on
+# the SR650a. It holds because the results tree is per-machine
+# (output_<server>_<cpu>_<gpu>/) and is normally consolidated in place. Rows
+# resolved this way are marked "probed" so the guess stays visible.
+FALLBACK_HOST = ("SR630 V4", "6740P", "L4")
+
+
+@functools.lru_cache(maxsize=1)
+def local_host():
+    """This machine's (server, cpu, gpu) labels, probed once per run.
+
+    Falls back to FALLBACK_HOST for any part the probe cannot determine, so a
+    missing nvidia-smi degrades one label rather than the whole row.
+    """
+    probed = (
+        short_server(hostinfo.server_sku()),
+        short_cpu(hostinfo.cpu_sku()),
+        short_gpu(hostinfo.gpu_sku(use_torch=False)),
+    )
+    unknown = {"", "unknown", "none"}
+    resolved = tuple(
+        fallback if label.lower() in unknown else label
+        for label, fallback in zip(probed, FALLBACK_HOST)
+    )
+    return resolved, all(label.lower() not in unknown for label in probed)
 
 LABEL_KEYS = ("server", "cpu", "gpu")
 
@@ -341,10 +381,11 @@ def resolve_host(rec):
         source = source or "inferred"
 
     if not all(labels.values()):
-        for key, value in zip(LABEL_KEYS, DEFAULT_HOST):
+        host, probe_worked = local_host()
+        for key, value in zip(LABEL_KEYS, host):
             if not labels[key]:
                 labels[key] = value
-        source = "assumed"
+        source = "probed" if probe_worked else "assumed"
 
     rec.update(labels)
     rec["host_source"] = source
@@ -541,7 +582,7 @@ def pool(shards):
 
 
 def main():
-    paths = sorted(p for p in OUTPUT_DIR.glob("*.txt"))
+    paths = sorted(p for p in OUTPUT_ROOT.rglob("*.txt"))
     records = [parse_file(p) for p in paths]
     runs = group_runs(records)
     rows = sorted((pool(r) for r in runs), key=lambda r: (r["timestamp"], r["script"]))
@@ -567,10 +608,13 @@ def main():
     print()
     for (server, cpu, gpu, source), n in sorted(hosts.items()):
         print(f"  {server:12} {cpu:8} {gpu:14} {source:9} {n:4d} runs")
-    assumed = sum(n for k, n in hosts.items() if k[3] == "assumed")
-    if assumed:
-        print(f"  note: {assumed} runs logged no hardware; attributed to "
-              f"{' / '.join(DEFAULT_HOST)} by assumption")
+    attributed = sum(n for k, n in hosts.items() if k[3] in ("probed", "assumed"))
+    if attributed:
+        host, probe_worked = local_host()
+        how = ("this machine, probed live via lscpu/nvidia-smi"
+               if probe_worked else "the hardcoded fallback (live probe failed)")
+        print(f"  note: {attributed} runs logged no hardware; attributed to "
+              f"{' / '.join(host)}\n        - {how}")
 
     incomplete = [
         r for r in rows

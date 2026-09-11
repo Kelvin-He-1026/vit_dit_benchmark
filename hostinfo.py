@@ -13,6 +13,7 @@ the reason one fails, so every probe is wrapped and falls back to "unknown"
 rather than raising on a missing /proc entry, an absent lscpu, or no GPU.
 """
 
+import functools
 import os
 import platform
 import re
@@ -21,6 +22,37 @@ import subprocess
 
 def _clean(text):
     return re.sub(r"\s+", " ", text).strip()
+
+
+def _run(cmd, timeout=10):
+    """Run a probe command, returning stdout or "" on any failure.
+
+    LC_ALL=C because these outputs are parsed by field name, and lscpu
+    translates those under a localised locale.
+    """
+    try:
+        out = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout,
+            env={**os.environ, "LC_ALL": "C"},
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return out.stdout if out.returncode == 0 else ""
+
+
+@functools.lru_cache(maxsize=1)
+def lscpu_fields():
+    """`lscpu` parsed into a dict; empty if lscpu is missing or fails.
+
+    Cached: several callers want a field from it and the subprocess is the
+    expensive part.
+    """
+    fields = {}
+    for line in _run(["lscpu"]).splitlines():
+        if ":" in line:
+            key, value = line.split(":", 1)
+            fields[key.strip()] = value.strip()
+    return fields
 
 
 def server_sku():
@@ -45,7 +77,10 @@ def server_sku():
 
 
 def cpu_sku():
-    """Marketing name of the host CPU, e.g. 'INTEL(R) XEON(R) 6787P'."""
+    """Marketing name of the host CPU, e.g. 'Intel(R) Xeon(R) 6740P'."""
+    model = lscpu_fields().get("Model name", "")
+    if model:
+        return _clean(model)
     try:
         with open("/proc/cpuinfo", encoding="utf-8") as f:
             for line in f:
@@ -74,19 +109,13 @@ def cpu_topology():
     """
     logical = os.cpu_count()
     physical = sockets = None
+    fields = lscpu_fields()
     try:
-        out = subprocess.run(["lscpu"], capture_output=True, text=True, timeout=5)
-        if out.returncode == 0:
-            fields = {}
-            for line in out.stdout.splitlines():
-                if ":" in line:
-                    key, value = line.split(":", 1)
-                    fields[key.strip()] = value.strip()
-            sockets = int(fields.get("Socket(s)", 0)) or None
-            per_socket = int(fields.get("Core(s) per socket", 0)) or None
-            if sockets and per_socket:
-                physical = sockets * per_socket
-    except (OSError, ValueError, subprocess.SubprocessError):
+        sockets = int(fields.get("Socket(s)", 0)) or None
+        per_socket = int(fields.get("Core(s) per socket", 0)) or None
+        if sockets and per_socket:
+            physical = sockets * per_socket
+    except ValueError:
         pass
 
     parts = []
@@ -99,31 +128,33 @@ def cpu_topology():
     return ", ".join(parts) or "unknown"
 
 
-def gpu_sku():
-    """Name of GPU 0, e.g. 'NVIDIA L4'. 'none' when no CUDA device is visible.
+def gpu_sku(use_torch=True):
+    """Name of GPU 0, e.g. 'NVIDIA L4'; 'none' when no GPU is visible.
 
-    torch is imported lazily: this module is also imported by tooling that has
-    no reason to pay for a torch import.
+    A multi-GPU host is reported as 'NVIDIA L4 x2'.
+
+    use_torch=True (the benchmarks) asks torch first, because torch honours
+    CUDA_VISIBLE_DEVICES and so reports the GPUs the run could actually see -
+    which is the honest answer when run_multisocket.py pins a shard to one
+    card. use_torch=False (consolidate_results.py) goes straight to
+    nvidia-smi, which needs no torch in the environment doing the reading.
+    torch is imported lazily either way.
     """
-    try:
-        import torch
-        if torch.cuda.is_available() and torch.cuda.device_count():
-            name = torch.cuda.get_device_name(0)
-            count = torch.cuda.device_count()
-            return f"{name} x{count}" if count > 1 else name
-        return "none"
-    except Exception:
-        pass
-    try:
-        out = subprocess.run(
-            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
-            capture_output=True, text=True, timeout=10,
-        )
-        if out.returncode == 0 and out.stdout.strip():
-            names = [n.strip() for n in out.stdout.splitlines() if n.strip()]
-            return f"{names[0]} x{len(names)}" if len(names) > 1 else names[0]
-    except (OSError, subprocess.SubprocessError):
-        pass
+    if use_torch:
+        try:
+            import torch
+            if torch.cuda.is_available() and torch.cuda.device_count():
+                name = torch.cuda.get_device_name(0)
+                count = torch.cuda.device_count()
+                return f"{name} x{count}" if count > 1 else name
+            return "none"
+        except Exception:
+            pass
+    names = [n.strip() for n in
+             _run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"]).splitlines()
+             if n.strip()]
+    if names:
+        return f"{names[0]} x{len(names)}" if len(names) > 1 else names[0]
     return "unknown"
 
 

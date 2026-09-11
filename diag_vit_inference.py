@@ -414,8 +414,9 @@ def main():
         part_server(model, processor, cache, payloads, labels, dtype, is_dino,
                     args, log)
 
-    out_path = (svb.OUTPUT_DIR
-                / f"diag_vit_{args.model.replace('/', '_')}_{timestamp}.txt")
+    out_dir = svb.OUTPUT_ROOT / "diag_output"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"diag_vit_{args.model.replace('/', '_')}_{timestamp}.txt"
     out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"\nSaved results to {out_path}")
 

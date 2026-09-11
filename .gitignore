@@ -47,6 +47,11 @@ dist/
 *.npy
 *.npz
 
+# ---- Benchmark results (per-machine trees, kept local) ----
+# One tree per box: output_<server>_<cpu>_<gpu>/{vit,dit,server_vit,server_dit,diag}_output.
+# Regenerate the CSV from the .txt files with consolidate_results.py.
+output_SR630_6740_L4/
+
 # ---- Logs & scratch ----
 *.log
 *.out
