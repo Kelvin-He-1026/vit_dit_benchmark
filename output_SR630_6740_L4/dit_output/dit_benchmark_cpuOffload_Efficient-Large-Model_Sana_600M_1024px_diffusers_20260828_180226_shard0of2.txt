@@ -1,0 +1,71 @@
+Timestamp  : 20260828_180226
+Model      : Efficient-Large-Model/Sana_600M_1024px_diffusers
+Device     : cpu
+Dtype      : bfloat16
+Samples    : 100
+Resolution : 1024x1024
+Steps      : 20
+Warmup     : 3
+Seed       : 42
+CPU offload: auto
+Threads    : 48
+Shard      : 0 of 2
+Loaded as  : torch.bfloat16
+Compile    : enabled (torch.compile on the transformer submodule)
+[001/050] 8.233 s/image
+[002/050] 8.431 s/image
+[003/050] 8.432 s/image
+[004/050] 8.245 s/image
+[005/050] 8.284 s/image
+[006/050] 8.333 s/image
+[007/050] 8.393 s/image
+[008/050] 8.482 s/image
+[009/050] 8.374 s/image
+[010/050] 8.504 s/image
+[011/050] 8.535 s/image
+[012/050] 8.502 s/image
+[013/050] 8.325 s/image
+[014/050] 8.625 s/image
+[015/050] 8.462 s/image
+[016/050] 8.401 s/image
+[017/050] 8.506 s/image
+[018/050] 8.699 s/image
+[019/050] 8.426 s/image
+[020/050] 8.393 s/image
+[021/050] 8.330 s/image
+[022/050] 8.378 s/image
+[023/050] 8.514 s/image
+[024/050] 8.845 s/image
+[025/050] 8.599 s/image
+[026/050] 8.525 s/image
+[027/050] 8.234 s/image
+[028/050] 8.408 s/image
+[029/050] 8.450 s/image
+[030/050] 8.466 s/image
+[031/050] 8.665 s/image
+[032/050] 8.404 s/image
+[033/050] 8.303 s/image
+[034/050] 8.420 s/image
+[035/050] 8.339 s/image
+[036/050] 8.180 s/image
+[037/050] 8.550 s/image
+[038/050] 8.365 s/image
+[039/050] 8.395 s/image
+[040/050] 8.468 s/image
+[041/050] 8.420 s/image
+[042/050] 8.371 s/image
+[043/050] 8.425 s/image
+[044/050] 8.489 s/image
+[045/050] 8.717 s/image
+[046/050] 8.841 s/image
+[047/050] 8.663 s/image
+[048/050] 8.399 s/image
+[049/050] 8.329 s/image
+[050/050] 8.586 s/image
+
+=== RESULT ===
+images              : 50
+total_generation_s  : 422.6656
+avg_seconds_per_image: 8.4533
+images_per_second   : 0.118297
+denoising_steps_per_s: 2.366

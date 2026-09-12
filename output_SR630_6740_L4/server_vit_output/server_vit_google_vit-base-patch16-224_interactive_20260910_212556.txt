@@ -1,0 +1,110 @@
+Timestamp  : 20260910_212556
+Script     : server_vit_benchmark
+Model      : google/vit-base-patch16-224
+Dataset    : ILSVRC/imagenet-1k
+Device     : cuda
+Dtype      : bfloat16
+Workload   : interactive
+Think time : 5 s
+SLA        : p95 end-to-end <= 100 ms
+Batch size : 32 (max)
+Batch wait : 5 ms
+Pre workers: 16
+Samples    : 256
+Warmup     : 5 s per level
+Measure    : 120 s per level
+Seed       : 42
+Compile    : enabled
+Processor  : fast
+Threads    : 2
+Self-test  : disabled
+Payloads   : 256 JPEGs, 67.4 KiB avg
+Warmed buckets: 1,2,4,8,16,32 x3
+Monitor    : host=psutil device=NVIDIA L4 every 250 ms
+
+=== SWEEP (req/s) ===
+[    8.00 req/s] n=   903  p50=   10.5  p95=    12.4  p99=    22.0 ms  batch=  1.1  cpu=  0.1c  gpu=  1.3%  PASS  ok
+[   16.00 req/s] n=  1871  p50=   10.5  p95=    12.8  p99=    20.1 ms  batch=  1.1  cpu=  0.2c  gpu=  2.4%  PASS  ok
+[   32.00 req/s] n=  3771  p50=   10.6  p95=    13.2  p99=    19.6 ms  batch=  1.3  cpu=  0.4c  gpu=  4.5%  PASS  ok
+[   64.00 req/s] n=  7722  p50=   10.9  p95=    14.4  p99=    20.6 ms  batch=  1.6  cpu=  0.8c  gpu=  8.2%  PASS  ok
+[  128.00 req/s] n= 15360  p50=   11.4  p95=    16.5  p99=    22.3 ms  batch=  2.2  cpu=  1.6c  gpu= 14.2%  PASS  ok
+[  256.00 req/s] n= 30871  p50=   13.5  p95=    22.3  p99=    32.1 ms  batch=  3.7  cpu=  2.9c  gpu= 26.0%  PASS  ok
+[  512.00 req/s] n= 61340  p50=   29.5  p95=    63.3  p99=    79.1 ms  batch= 12.1  cpu=  5.6c  gpu= 55.4%  PASS  ok
+[ 1024.00 req/s] n=122837  p50=14529.2  p95= 26712.1  p99= 27410.6 ms  batch= 32.0  cpu= 14.8c  gpu= 72.7%  FAIL  p95 26712.1 ms > 100 ms
+[  724.08 req/s] n= 86797  p50=   62.8  p95=    86.2  p99=   103.1 ms  batch= 27.9  cpu=  9.1c  gpu= 72.5%  PASS  ok
+[  861.08 req/s] n=103270  p50=   92.4  p95=   251.0  p99=   340.5 ms  batch= 31.6  cpu= 13.2c  gpu= 76.8%  FAIL  p95 251.0 ms > 100 ms
+[  789.61 req/s] n= 94706  p50=   70.2  p95=   107.4  p99=   299.0 ms  batch= 30.0  cpu= 10.9c  gpu= 73.7%  FAIL  p95 107.4 ms > 100 ms
+[  756.13 req/s] n= 90603  p50=   66.4  p95=    98.1  p99=   257.8 ms  batch= 29.1  cpu= 10.0c  gpu= 72.9%  PASS  ok
+
+=== RESULT ===
+sla_ms                  : 100
+sla_seconds             : 0.1000
+sla_percentile          : 95
+workload                : interactive
+max_qps                 : 756.13
+max_concurrent_inflight : 53.59
+think_time_s            : 5
+max_concurrent_users    : 3834.3
+images_per_second       : 755.025
+
+users by think time (Little's Law, same measurement):
+  think_time=  0.0s        :       53.6 users
+  think_time=  1.0s        :      809.7 users
+  think_time=  2.0s        :     1565.9 users
+  think_time=  5.0s        :     3834.3 users
+  think_time= 10.0s        :     7614.9 users
+
+at the winning level:
+  requests_measured     : 90603
+  p50_ms                : 66.37
+  p95_ms                : 98.10
+  p99_ms                : 257.75
+  max_ms                : 358.44
+  avg_ms_per_image      : 70.877
+  mean_batch_size       : 29.09
+  queue_depth_max       : 101
+  p95_drift             : x0.880
+
+  where the p95 budget goes (p95 of each stage):
+    harness_lag_ms      : 2.86
+    preprocess_ms       : 27.49
+    queue_wait_ms       : 40.82
+    inference_ms        : 38.12
+
+  resources (472 samples over the window):
+    cpu_logical_count   : 96
+    cpu_cores_busy_mean : 9.95
+    cpu_cores_busy_max  : 15.75
+    proc_cpu_pct_mean   : 995.1
+    sys_cpu_pct_mean    : 10.3
+    rss_gib_max         : 3.86
+    threads_max         : 46
+    gpu_util_pct_mean   : 72.9
+    gpu_mem_util_pct_mean: 41.7
+    gpu_mem_used_gib_max: 1.27
+    gpu_power_w_mean    : 69.1
+    gpu_power_w_max     : 76.5
+    gpu_sm_clock_mhz_mean: 1350
+    gpu_temp_c_max      : 66
+    NOTE: gpu_util_pct is NVML's duty cycle - percent of time in which at least
+          one kernel was resident - NOT SM occupancy. It can read near 100% on a
+          GPU that is mostly idle between short kernels, so treat power draw and
+          SM clock as the honest signal of how much work is actually happening.
+
+  top1_correct          : 75387
+  top1_accuracy         : 0.8321
+  images                : 90603
+
+=== LADDER ===
+        8.00 req/s   p95=    12.42 ms  n=   903  PASS  ok
+       16.00 req/s   p95=    12.82 ms  n=  1871  PASS  ok
+       32.00 req/s   p95=    13.20 ms  n=  3771  PASS  ok
+       64.00 req/s   p95=    14.45 ms  n=  7722  PASS  ok
+      128.00 req/s   p95=    16.55 ms  n= 15360  PASS  ok
+      256.00 req/s   p95=    22.32 ms  n= 30871  PASS  ok
+      512.00 req/s   p95=    63.34 ms  n= 61340  PASS  ok
+     1024.00 req/s   p95= 26712.12 ms  n=122837  FAIL  p95 26712.1 ms > 100 ms
+      724.08 req/s   p95=    86.17 ms  n= 86797  PASS  ok
+      861.08 req/s   p95=   251.05 ms  n=103270  FAIL  p95 251.0 ms > 100 ms
+      789.61 req/s   p95=   107.36 ms  n= 94706  FAIL  p95 107.4 ms > 100 ms
+      756.13 req/s   p95=    98.10 ms  n= 90603  PASS  ok

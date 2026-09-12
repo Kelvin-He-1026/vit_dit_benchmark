@@ -1,0 +1,24 @@
+Timestamp  : 20260828_134654
+Model      : Efficient-Large-Model/Sana_600M_1024px_diffusers
+Device     : cuda
+Dtype      : float32
+Samples    : 2
+Resolution : 1024x1024
+Steps      : 8
+Warmup     : 0
+Seed       : 42
+CPU offload: auto
+Threads    : 96
+Shard      : 0 of 1
+Loaded as  : torch.float32
+GPU placement: full pipeline resident on GPU
+Compile    : disabled
+[001/002] 3.316 s/image
+[002/002] 3.317 s/image
+
+=== RESULT ===
+images              : 2
+total_generation_s  : 6.6331
+avg_seconds_per_image: 3.3165
+images_per_second   : 0.301519
+denoising_steps_per_s: 2.412

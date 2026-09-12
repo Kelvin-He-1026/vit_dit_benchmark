@@ -1,0 +1,112 @@
+Timestamp  : 20260910_152309
+Script     : diag_vit_inference
+Model      : google/vit-base-patch16-224
+GPU        : NVIDIA RTX PRO 6000 Blackwell Server Edition
+Dtype      : bfloat16
+Processor  : fast
+Pre workers: 8
+Threads    : 2 intra-op, 1 inter-op
+GIL switch : 5 ms
+Parts      : model,layers,server
+
+=== PART 1: pure model (input already on GPU) ===
+  bs  event_ms   wall_ms   pipe_ms   ms/img     img/s
+   1      2.29      2.36      2.23    2.227       449
+   2      2.25      2.30      2.19    1.097       911
+   4      2.26      2.34      2.22    0.556      1799
+   8      2.29      2.37      2.23    0.278      3591
+  16      3.03      3.21      3.02    0.189      5290
+  32      5.77      5.94      5.83    0.182      5488
+event/wall = one forward synced alone (p50); pipe = back-to-back forwards. If event_ms barely grows with bs, the forward is launch-bound (Python), not compute-bound.
+
+=== PART 2: layers added back (p50 ms per batch) ===
+  bs  gpu->out  cpu->out    cpu+bg  jpeg->out  (jpeg pre)
+   1      2.32      2.67    128.17       9.12        4.79
+   2      2.41      2.77    134.11      18.65        9.25
+   4      2.41      2.94    131.18      21.82       11.95
+   8      2.52      3.36    135.60      61.27       50.10
+  16      3.22      4.49    132.89      68.42       55.69
+  32      5.93      8.35    134.71      87.63       72.76
+
+cpu path split, idle vs 8 background preprocess threads (p50 ms):
+  bs   mode    collate        h2d cpu_launch        gpu        d2h      total
+   1   idle       0.04       0.10       2.45       2.44       0.04       2.67
+   1     bg       0.53       1.28     125.23     124.65       0.28     128.17
+   2   idle       0.06       0.20       2.44       2.42       0.04       2.77
+   2     bg       0.49       1.52     130.52     129.46       0.39     134.11
+   4   idle       0.10       0.31       2.46       2.45       0.04       2.94
+   4     bg       0.63       1.63     128.43     128.31       0.38     131.18
+   8   idle       0.20       0.50       2.51       2.55       0.04       3.36
+   8     bg       1.07       2.41     131.55     131.11       0.37     135.60
+  16   idle       0.42       0.87       2.44       2.99       0.04       4.49
+  16     bg       1.63       2.78     128.10     128.01       0.37     132.89
+  32   idle       0.82       1.57       2.42       5.78       0.04       8.35
+  32     bg       2.57       4.54     125.95     125.16       0.29     134.71
+If bg >> idle (especially cpu_launch/gpu), preprocess threads are starving the inference thread of the GIL/CPU.
+
+=== PART 3: server, inference_ms split ===
+max_batch=32 batch_wait=5ms pre_workers=8 warmup=5s measure=20s
+
+--- 128 req/s, mode=jpeg: n=2503 qps=125.2 mean_batch=4.1
+  stage            p50_ms   p95_ms
+  e2e               35.92    56.64
+  preprocess         9.47    16.48
+  queue_wait        10.95    22.16
+  inference         13.48    23.19
+    exec_wait        0.10     0.26
+    collate          0.37     1.00
+    h2d              0.62     1.37
+    cpu_launch      11.67    20.54
+    gpu             11.55    20.44
+    d2h              0.09     0.15
+    postback         0.20     0.51
+
+--- 128 req/s, mode=cached: n=2503 qps=125.2 mean_batch=2.9
+  stage            p50_ms   p95_ms
+  e2e               18.34    26.45
+  preprocess         0.21     0.33
+  queue_wait         7.10    15.05
+  inference         10.25    11.08
+    exec_wait        0.09     0.16
+    collate          0.23     0.43
+    h2d              0.48     0.81
+    cpu_launch       9.12     9.71
+    gpu              9.05     9.67
+    d2h              0.09     0.10
+    postback         0.18     0.20
+
+--- 200 req/s, mode=jpeg: n=4045 qps=202.2 mean_batch=8.5
+  stage            p50_ms   p95_ms
+  e2e               46.96    82.73
+  preprocess        11.11    23.36
+  queue_wait        14.51    34.65
+  inference         18.36    41.81
+    exec_wait        0.13     0.61
+    collate          0.78     1.93
+    h2d              1.17     2.94
+    cpu_launch      15.21    36.80
+    gpu             15.14    36.73
+    d2h              0.09     0.22
+    postback         0.19     0.89
+
+--- 200 req/s, mode=cached: n=4045 qps=202.2 mean_batch=4.3
+  stage            p50_ms   p95_ms
+  e2e               19.93    27.35
+  preprocess         0.22     0.35
+  queue_wait         8.28    15.56
+  inference         10.70    11.61
+    exec_wait        0.09     0.17
+    collate          0.29     0.56
+    h2d              0.61     1.01
+    cpu_launch       9.30     9.95
+    gpu              9.23     9.92
+    d2h              0.09     0.10
+    postback         0.18     0.20
+
+summary (p95 ms):
+  rate    mode  batch     e2e   infer  launch     gpu  postbk
+   128    jpeg    4.1   56.64   23.19   20.54   20.44    0.51
+   128  cached    2.9   26.45   11.08    9.71    9.67    0.20
+   200    jpeg    8.5   82.73   41.81   36.80   36.73    0.89
+   200  cached    4.3   27.35   11.61    9.95    9.92    0.20
+Compare gpu here with PART 1 event_ms at the same batch size: the gap is host overhead. If cached << jpeg, preprocessing threads are the cause.

@@ -1,0 +1,73 @@
+Timestamp  : 20260902_142359
+Model      : stabilityai/stable-diffusion-3.5-large
+Device     : cuda
+Dtype      : bfloat16
+Samples    : 100
+Resolution : 1024x1024
+Steps      : 20
+Warmup     : 3
+Seed       : 42
+CPU offload: auto
+Threads    : 64
+TF32       : disabled (matmul_precision=highest)
+Shard      : 0 of 2
+Loaded as  : torch.bfloat16
+GPU placement: full pipeline resident on GPU
+Compile    : disabled
+[001/050] 7.126 s/image
+[002/050] 7.324 s/image
+[003/050] 7.464 s/image
+[004/050] 7.540 s/image
+[005/050] 7.586 s/image
+[006/050] 7.618 s/image
+[007/050] 7.673 s/image
+[008/050] 7.652 s/image
+[009/050] 7.647 s/image
+[010/050] 7.685 s/image
+[011/050] 7.675 s/image
+[012/050] 7.719 s/image
+[013/050] 7.723 s/image
+[014/050] 7.674 s/image
+[015/050] 7.689 s/image
+[016/050] 7.785 s/image
+[017/050] 7.703 s/image
+[018/050] 7.678 s/image
+[019/050] 7.765 s/image
+[020/050] 7.720 s/image
+[021/050] 7.747 s/image
+[022/050] 7.673 s/image
+[023/050] 7.551 s/image
+[024/050] 7.526 s/image
+[025/050] 7.551 s/image
+[026/050] 7.582 s/image
+[027/050] 7.559 s/image
+[028/050] 7.552 s/image
+[029/050] 7.502 s/image
+[030/050] 7.598 s/image
+[031/050] 7.545 s/image
+[032/050] 7.544 s/image
+[033/050] 7.557 s/image
+[034/050] 7.560 s/image
+[035/050] 7.541 s/image
+[036/050] 7.578 s/image
+[037/050] 7.577 s/image
+[038/050] 7.611 s/image
+[039/050] 7.534 s/image
+[040/050] 7.521 s/image
+[041/050] 7.566 s/image
+[042/050] 7.561 s/image
+[043/050] 7.569 s/image
+[044/050] 7.506 s/image
+[045/050] 7.571 s/image
+[046/050] 7.553 s/image
+[047/050] 7.549 s/image
+[048/050] 7.543 s/image
+[049/050] 7.592 s/image
+[050/050] 7.541 s/image
+
+=== RESULT ===
+images              : 50
+total_generation_s  : 379.4072
+avg_seconds_per_image: 7.5881
+images_per_second   : 0.131785
+denoising_steps_per_s: 2.636

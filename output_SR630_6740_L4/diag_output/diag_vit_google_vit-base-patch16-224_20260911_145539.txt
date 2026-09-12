@@ -1,0 +1,53 @@
+Timestamp  : 20260911_145539
+Script     : diag_vit_inference
+Model      : google/vit-base-patch16-224
+Server     : ThinkSystem SR630 V4
+CPU        : Intel(R) Xeon(R) 6740P
+CPU cores  : 96 logical, 96 physical, 2 sockets
+GPU        : NVIDIA L4 x2
+Dtype      : bfloat16
+Input      : pre-decoded tensors (no JPEG preprocessing timed)
+Pre workers: 8
+Threads    : 2 intra-op, 1 inter-op
+Parts      : model,layers,server
+
+=== PART 1: pure model (input already on GPU) ===
+  bs  event_ms   wall_ms   pipe_ms   ms/img     img/s
+   1      2.20      2.21      2.14    2.141       467
+   2      2.46      2.48      2.43    1.214       824
+   4      4.00      4.02      3.99    0.998      1002
+   8      8.29      8.34      8.18    1.023       978
+  16     16.31     16.33     16.15    1.009       991
+  32     31.72     31.74     31.54    0.986      1014
+event/wall = one forward synced alone (p50); pipe = back-to-back forwards. If event_ms barely grows with bs, the forward is launch-bound (Python), not compute-bound.
+
+=== PART 2: GPU tensor vs CPU tensor -> output (p50 ms per batch) ===
+  bs  gpu->out    collate        h2d cpu_launch        gpu        d2h      total
+   1      2.22       0.04       0.11       2.37       2.35       0.03       2.56
+   2      2.48       0.07       0.17       2.35       2.47       0.04       2.77
+   4      4.05       0.11       0.28       2.31       3.93       0.04       4.39
+   8      8.44       0.21       0.48       2.40       7.96       0.04       8.72
+  16     16.36       0.40       0.85       2.38      15.62       0.04      16.94
+  32     31.66       0.78       1.63       2.40      30.30       0.04      32.78
+gpu->out = forward + argmax + D2H from a GPU-resident batch. The other columns are the cpu->out path split; total - gpu->out is what the copies cost.
+
+=== PART 3: server with pre-decoded tensors, inference_ms split ===
+max_batch=32 batch_wait=5ms pre_workers=8 warmup=5s measure=20s
+
+--- 200 req/s: n=4045 qps=202.2 mean_batch=2.8
+  stage            p50_ms   p95_ms
+  e2e                8.89    12.60
+  queue_wait         5.11     8.23
+  inference          3.55     4.35
+    exec_wait        0.03     0.08
+    collate          0.10     0.15
+    h2d              0.23     0.35
+    cpu_launch       2.46     2.70
+    gpu              3.05     3.67
+    d2h              0.04     0.04
+    postback         0.07     0.08
+
+summary (p95 ms):
+  rate  batch     e2e   infer  launch     gpu  postbk
+   200    2.8   12.60    4.35    2.70    3.67    0.08
+Compare cpu_launch here with PART 2 at the same batch size: the gap is what the server environment adds on the host side.

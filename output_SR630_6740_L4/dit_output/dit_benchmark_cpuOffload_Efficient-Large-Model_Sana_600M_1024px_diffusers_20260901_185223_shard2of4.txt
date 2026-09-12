@@ -1,0 +1,47 @@
+Timestamp  : 20260901_185223
+Model      : Efficient-Large-Model/Sana_600M_1024px_diffusers
+Device     : cpu
+Dtype      : bfloat16
+Samples    : 100
+Resolution : 1024x1024
+Steps      : 20
+Warmup     : 3
+Seed       : 42
+CPU offload: auto
+Threads    : 64
+TF32       : disabled (matmul_precision=highest)
+Shard      : 2 of 4
+Loaded as  : torch.bfloat16
+Compile    : disabled
+[001/025] 24.690 s/image
+[002/025] 24.649 s/image
+[003/025] 24.625 s/image
+[004/025] 24.826 s/image
+[005/025] 24.587 s/image
+[006/025] 24.693 s/image
+[007/025] 24.559 s/image
+[008/025] 24.762 s/image
+[009/025] 24.477 s/image
+[010/025] 24.751 s/image
+[011/025] 24.798 s/image
+[012/025] 24.652 s/image
+[013/025] 24.577 s/image
+[014/025] 24.677 s/image
+[015/025] 24.524 s/image
+[016/025] 24.752 s/image
+[017/025] 24.554 s/image
+[018/025] 24.650 s/image
+[019/025] 24.591 s/image
+[020/025] 24.766 s/image
+[021/025] 24.670 s/image
+[022/025] 24.423 s/image
+[023/025] 24.720 s/image
+[024/025] 24.614 s/image
+[025/025] 24.255 s/image
+
+=== RESULT ===
+images              : 25
+total_generation_s  : 615.8436
+avg_seconds_per_image: 24.6337
+images_per_second   : 0.040595
+denoising_steps_per_s: 0.812
