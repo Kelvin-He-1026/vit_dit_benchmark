@@ -68,8 +68,8 @@ BASE_DIR = Path(__file__).resolve().parent
 # dit_output, server_vit_output, server_dit_output, diag_output) need no
 # enumerating here - a new one is picked up as soon as it has files in it.
 OUTPUT_ROOT = Path(os.environ.get("BENCH_OUTPUT_ROOT",
-                                  BASE_DIR / "output_SR630_6740_L4"))
-CSV_PATH = OUTPUT_ROOT / "consolidated_results.csv"
+                                  BASE_DIR / "output_SR650a_6787P_RTX6000"))
+CSV_PATH = OUTPUT_ROOT / "consolidated_results_SR650a.csv"
 
 # Arguments/config first, then measurements, then provenance.
 ARG_FIELDS = [

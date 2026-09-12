@@ -1,0 +1,107 @@
+Timestamp  : 20260911_222245
+Script     : server_vit_benchmark
+Model      : facebook/dinov2-giant
+Dataset    : ILSVRC/imagenet-1k
+Device     : cuda
+Server     : ThinkSystem SR650a V4
+CPU        : Intel(R) Xeon(R) 6787P
+CPU cores  : 172 logical, 172 physical, 2 sockets
+GPU        : NVIDIA RTX PRO 6000 Blackwell Server Edition
+Dtype      : bfloat16
+Workload   : interactive
+Think time : 5 s
+SLA        : p95 end-to-end <= 100 ms
+Batch size : 32 (max)
+Batch wait : 5 ms
+Pre workers: 12
+Samples    : 256
+Warmup     : 5 s per level
+Measure    : 120 s per level
+Seed       : 42
+Compile    : enabled
+Processor  : fast
+Threads    : 2
+Self-test  : disabled
+Payloads   : 256 JPEGs, 67.4 KiB avg
+Warmed buckets: 1,2,4,8,16,32 x3
+Monitor    : host=psutil device=NVIDIA RTX PRO 6000 Blackwell Server Edition every 250 ms
+
+=== SWEEP (req/s) ===
+[    8.00 req/s] n=   903  p50=   22.1  p95=    28.2  p99=    58.4 ms  batch=  1.1  cpu=  0.4c  gpu=  3.4%  PASS  ok
+[   16.00 req/s] n=  1871  p50=   22.5  p95=    31.7  p99=    59.9 ms  batch=  1.2  cpu=  0.8c  gpu=  7.0%  PASS  ok
+[   32.00 req/s] n=  3771  p50=   23.4  p95=    35.0  p99=    58.1 ms  batch=  1.3  cpu=  1.6c  gpu= 13.2%  PASS  ok
+[   64.00 req/s] n=  7722  p50=   26.6  p95=    43.7  p99=    63.9 ms  batch=  1.9  cpu=  2.9c  gpu= 25.0%  PASS  ok
+[  128.00 req/s] n= 15360  p50=   35.7  p95=    64.6  p99=   123.2 ms  batch=  3.7  cpu=  5.3c  gpu= 44.5%  PASS  ok
+[  256.00 req/s] n= 30871  p50=  191.2  p95=   309.2  p99=   401.1 ms  batch= 29.1  cpu=  8.8c  gpu= 89.7%  FAIL  p95 309.2 ms > 100 ms
+[  181.02 req/s] n= 21756  p50=  110.9  p95=   218.1  p99=   240.1 ms  batch= 14.1  cpu=  6.8c  gpu= 80.3%  FAIL  p95 218.1 ms > 100 ms
+[  152.22 req/s] n= 18260  p50=   47.5  p95=   109.9  p99=   167.6 ms  batch=  5.7  cpu=  6.0c  gpu= 62.3%  FAIL  p95 109.9 ms > 100 ms
+[  139.58 req/s] n= 16753  p50=   41.4  p95=    91.3  p99=   130.9 ms  batch=  4.6  cpu=  5.6c  gpu= 55.2%  PASS  ok
+[  145.76 req/s] n= 17455  p50=   43.3  p95=    95.8  p99=   131.2 ms  batch=  4.9  cpu=  5.8c  gpu= 57.6%  PASS  ok
+
+=== RESULT ===
+sla_ms                  : 100
+sla_seconds             : 0.1000
+sla_percentile          : 95
+workload                : interactive
+max_qps                 : 145.76
+max_concurrent_inflight : 7.15
+think_time_s            : 5
+max_concurrent_users    : 736.0
+images_per_second       : 145.458
+
+users by think time (Little's Law, same measurement):
+  think_time=  0.0s        :        7.2 users
+  think_time=  1.0s        :      152.9 users
+  think_time=  2.0s        :      298.7 users
+  think_time=  5.0s        :      736.0 users
+  think_time= 10.0s        :     1464.8 users
+
+at the winning level:
+  requests_measured     : 17455
+  p50_ms                : 43.30
+  p95_ms                : 95.84
+  p99_ms                : 131.18
+  max_ms                : 214.55
+  avg_ms_per_image      : 49.072
+  mean_batch_size       : 4.91
+  queue_depth_max       : 15
+  p95_drift             : x1.002
+
+  where the p95 budget goes (p95 of each stage):
+    harness_lag_ms      : 1.65
+    preprocess_ms       : 20.00
+    queue_wait_ms       : 33.58
+    inference_ms        : 53.24
+
+  resources (476 samples over the window):
+    cpu_logical_count   : 172
+    cpu_cores_busy_mean : 5.82
+    cpu_cores_busy_max  : 8.19
+    proc_cpu_pct_mean   : 581.8
+    sys_cpu_pct_mean    : 3.4
+    rss_gib_max         : 2.62
+    threads_max         : 38
+    gpu_util_pct_mean   : 57.6
+    gpu_mem_util_pct_mean: 7.8
+    gpu_mem_used_gib_max: 4.53
+    gpu_power_w_mean    : 283.9
+    gpu_power_w_max     : 365.5
+    gpu_sm_clock_mhz_mean: 2161
+    gpu_temp_c_max      : 89
+    NOTE: gpu_util_pct is NVML's duty cycle - percent of time in which at least
+          one kernel was resident - NOT SM occupancy. It can read near 100% on a
+          GPU that is mostly idle between short kernels, so treat power draw and
+          SM clock as the honest signal of how much work is actually happening.
+  images                : 17455
+
+=== LADDER ===
+        8.00 req/s   p95=    28.23 ms  n=   903  PASS  ok
+       16.00 req/s   p95=    31.74 ms  n=  1871  PASS  ok
+       32.00 req/s   p95=    34.95 ms  n=  3771  PASS  ok
+       64.00 req/s   p95=    43.70 ms  n=  7722  PASS  ok
+      128.00 req/s   p95=    64.58 ms  n= 15360  PASS  ok
+      256.00 req/s   p95=   309.22 ms  n= 30871  FAIL  p95 309.2 ms > 100 ms
+      181.02 req/s   p95=   218.07 ms  n= 21756  FAIL  p95 218.1 ms > 100 ms
+      152.22 req/s   p95=   109.93 ms  n= 18260  FAIL  p95 109.9 ms > 100 ms
+      139.58 req/s   p95=    91.30 ms  n= 16753  PASS  ok
+      145.76 req/s   p95=    95.84 ms  n= 17455  PASS  ok

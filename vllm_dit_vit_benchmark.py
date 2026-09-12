@@ -89,9 +89,9 @@ DATASET_DIR = BASE_DIR / "dataset"
 MODELS_DIR = BASE_DIR / "models"
 # Results are filed per machine, since several boxes feed this repo and a run
 # is only comparable if you know which one produced it. Override when running
-# elsewhere: BENCH_OUTPUT_ROOT=output_SR650a_6787P_RTXPRO6000 python vllm_dit_vit_benchmark.py
+# elsewhere: BENCH_OUTPUT_ROOT=output_SR630_6740_L4 python vllm_dit_vit_benchmark.py
 OUTPUT_ROOT = Path(os.environ.get("BENCH_OUTPUT_ROOT",
-                                  BASE_DIR / "output_SR630_6740_L4"))
+                                  BASE_DIR / "output_SR650a_6787P_RTX6000"))
 OUTPUT_DIR = OUTPUT_ROOT / "server_dit_output"
 HF_HUB_CACHE_DIR = BASE_DIR / "hf_hub_cache"
 
