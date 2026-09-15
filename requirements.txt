@@ -15,6 +15,22 @@
 
 torch==2.13.0
 torchvision==0.28.0
+# W8A8 quantisation kernels behind --quant in vit_benchmark.py and
+# server_vit_benchmark.py. Optional: both scripts run without it and only
+# raise if --quant asks for something other than none. Install with
+# --no-deps to keep the torch pin above from being resolved again.
+#
+# Importing it prints two deprecation warnings against torch 2.13:
+#   <enum 'KernelPreference'> ... register_constant() on Enum subclasses is
+#   deprecated and will be an error in a future release
+# They come from torchao's register_as_pytree_constant (torchao/utils.py),
+# which registers enums that torch now handles natively, and they fire at
+# import before any benchmark code runs. Harmless at these pins and not
+# suppressed on purpose: torch says it will make this an error, so the day
+# these warnings turn into an ImportError is the day torchao needs upgrading.
+# No released torchao fixes it yet (0.18.0 is the newest as of 2026-09-15).
+# Check after any torch bump with: python -c "import torchao"
+torchao==0.18.0
 
 transformers==4.57.6
 diffusers==0.39.0

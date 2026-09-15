@@ -91,6 +91,10 @@ ARG_FIELDS = [
     "dataset",
     "device",
     "dtype",
+    "quant",
+    "quant_detail",
+    "mode",
+    "replicas_raw",
     "samples",
     "batch_size",
     "resolution",
@@ -123,6 +127,16 @@ METRIC_FIELDS = [
     "compute_s_max",
     "compute_s_sum",
     "images_per_second",
+    "images_per_second_per_w",
+    "best_batch_size",
+    "best_replicas",
+    "ms_per_image_per_replica",
+    "measured_s",
+    "cpu_launch_ms",
+    "gpu_ms",
+    "bound_by",
+    "power_w_mean",
+    "power_source",
     "avg_ms_per_image",
     "avg_s_per_image",
     "denoising_steps_per_s",
@@ -148,6 +162,9 @@ METRIC_FIELDS = [
     # Resource counters, same source.
     "cpu_logical_count",
     "cpu_cores_busy_mean",
+    "sys_cores_busy_mean",
+    "sys_cores_busy_max",
+    "cpu_power_w_mean",
     "cpu_cores_busy_max",
     "proc_cpu_pct_mean",
     "sys_cpu_pct_mean",
@@ -192,6 +209,7 @@ KEY_MAP = {
     "Dataset": "dataset",
     "Device": "device",
     "Dtype": "dtype",
+    "Quant": "quant_raw",
     "Samples": "samples",
     "Batch size": "batch_size",
     "Resolution": "resolution",
@@ -212,6 +230,22 @@ KEY_MAP = {
     "denoising_steps_per_s": "denoising_steps_per_s",
     "top1_correct": "top1_correct",
     "top1_accuracy": "top1_accuracy",
+    # vit_benchmark.py --throughput: header config and result block.
+    "Mode": "mode",
+    "Replicas": "replicas_raw",
+    "best_batch_size": "best_batch_size",
+    "best_replicas": "best_replicas",
+    "ms_per_image_per_replica": "ms_per_image_per_replica",
+    "cpu_launch_ms": "cpu_launch_ms",
+    "gpu_ms": "gpu_ms",
+    "bound_by": "bound_by",
+    "measured_s": "measured_s",
+    "sys_cores_busy_mean": "sys_cores_busy_mean",
+    "sys_cores_busy_max": "sys_cores_busy_max",
+    "cpu_power_w_mean": "cpu_power_w_mean",
+    "power_w_mean": "power_w_mean",
+    "power_source": "power_source",
+    "images_per_second_per_w": "images_per_second_per_w",
     # server_vit_benchmark.py: header config.
     "Workload": "workload",
     "Think time": "think_time_s",
@@ -399,10 +433,12 @@ def resolve_host(rec):
 # The host fields are included so that two runs of the same configuration on
 # different machines can never be merged into one row.
 GROUP_FIELDS = (
-    "script", "model", "dataset", "device", "dtype", "samples", "batch_size",
+    "script", "model", "dataset", "device", "dtype", "quant_raw", "samples",
+    "batch_size",
     "resolution", "steps", "warmup", "seed", "threads", "compile_raw",
     "cpu_offload", "batched", "runtime", "diffusion_batch_size", "num_shards",
-    "server", "cpu", "gpu", "cpu_sku", "gpu_sku", "workload",
+    "server", "cpu", "gpu", "cpu_sku", "gpu_sku", "workload", "mode",
+    "replicas_raw",
 )
 
 # Figures that describe the whole run rather than one shard's slice of it, so
@@ -419,6 +455,12 @@ PASSTHROUGH_METRICS = (
     "gpu_util_pct_mean", "gpu_mem_util_pct_mean", "gpu_mem_used_gib_max",
     "gpu_power_w_mean", "gpu_power_w_max", "gpu_sm_clock_mhz_mean",
     "gpu_temp_c_max",
+    # vit_benchmark.py --throughput reports one winning cell per run, so these
+    # pass through as logged rather than being pooled across shards.
+    "best_batch_size", "best_replicas", "ms_per_image_per_replica",
+    "measured_s", "cpu_launch_ms", "gpu_ms", "bound_by", "sys_cores_busy_mean", "sys_cores_busy_max",
+    "cpu_power_w_mean", "power_w_mean", "power_source",
+    "images_per_second_per_w",
 )
 
 
@@ -431,6 +473,7 @@ def script_name(filename):
         ("dit_benchmark_", "dit_benchmark"),
         ("diag_vit_", "diag_vit_inference"),
         ("vit_benchmark_", "vit_benchmark"),
+        ("vit_throughput_", "vit_throughput"),
     ):
         if filename.startswith(prefix):
             return name
@@ -486,6 +529,13 @@ def parse_file(path):
         rec["compile"] = raw
     detail = raw[len(rec["compile"]):].strip() if raw.startswith(rec["compile"]) else ""
     rec["compile_detail"] = detail.strip("()").strip() if detail else ""
+
+    # "fp8 (w8a8, float8_e4m3 weights ...)" -> fp8 + the rest. Runs predating
+    # --quant have no Quant line at all; they were all unquantised.
+    raw = rec.pop("quant_raw", "") or "disabled"
+    kind, _, detail = raw.partition(" ")
+    rec["quant"] = kind
+    rec["quant_detail"] = detail.strip().strip("()").strip()
 
     return rec
 

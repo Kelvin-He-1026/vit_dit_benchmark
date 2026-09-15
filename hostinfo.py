@@ -4,7 +4,8 @@
 Runs from different machines land in the same output/ directory and the same
 consolidated CSV - an L4 box and an RTX PRO 6000 box are already mixed in
 there - so a result is only comparable if it says which hardware produced it.
-Every benchmark logs these four lines in its header and consolidate_results.py
+Every benchmark logs these four lines in its header and
+consolidate_results_sr630.py
 lifts them into the server_sku / cpu_sku / gpu_sku / cpu_cores columns,
 and derives the short server / cpu / gpu labels from them.
 
@@ -131,12 +132,15 @@ def cpu_topology():
 def gpu_sku(use_torch=True):
     """Name of GPU 0, e.g. 'NVIDIA L4'; 'none' when no GPU is visible.
 
-    A multi-GPU host is reported as 'NVIDIA L4 x2'.
+    A multi-GPU host is reported as 'NVIDIA L4 x2'. Note that this is the
+    inventory the process can see, NOT the devices a given run used: a
+    single-GPU run on this box still reports 'NVIDIA L4 x2'. Scripts that can
+    use a subset log that separately (vit_benchmark.py's Devices line).
 
     use_torch=True (the benchmarks) asks torch first, because torch honours
     CUDA_VISIBLE_DEVICES and so reports the GPUs the run could actually see -
     which is the honest answer when run_multisocket.py pins a shard to one
-    card. use_torch=False (consolidate_results.py) goes straight to
+    card. use_torch=False (consolidate_results_sr630.py) goes straight to
     nvidia-smi, which needs no torch in the environment doing the reading.
     torch is imported lazily either way.
     """
@@ -148,7 +152,7 @@ def gpu_sku(use_torch=True):
                 count = torch.cuda.device_count()
                 return f"{name} x{count}" if count > 1 else name
             return "none"
-        except Exception:
+        except Exception:  # noqa: BLE001 - identification must never raise
             pass
     names = [n.strip() for n in
              _run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"]).splitlines()
