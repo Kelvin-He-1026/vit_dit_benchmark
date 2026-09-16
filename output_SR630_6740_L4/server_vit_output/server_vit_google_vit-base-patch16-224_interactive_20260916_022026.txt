@@ -1,0 +1,95 @@
+Timestamp  : 20260916_022026
+Script     : server_vit_benchmark
+Model      : google/vit-base-patch16-224
+Dataset    : ILSVRC/imagenet-1k
+Device     : cuda
+Server     : ThinkSystem SR630 V4
+CPU        : Intel(R) Xeon(R) 6740P
+CPU cores  : 96 logical, 96 physical, 2 sockets
+GPU        : NVIDIA L4 x2
+Dtype      : bfloat16
+Quant      : disabled
+Workload   : interactive
+Think time : 5 s
+SLA        : p95 end-to-end <= 100 ms
+Batch size : 32 (max)
+Batch wait : 5 ms
+Pre workers: 8
+Samples    : 64
+Warmup     : 3 s per level
+Measure    : 20 s per level
+Seed       : 42
+Compile    : disabled
+Processor  : fast
+Threads    : 2
+Self-test  : disabled
+Payloads   : 64 JPEGs, 60.3 KiB avg
+Warmed buckets: 1,2,4,8,16,32 x1
+Monitor    : host=psutil device=NVIDIA L4 every 250 ms
+
+=== SWEEP (req/s) ===
+[  128.00 req/s] n=  2545  p50=   11.7  p95=    16.0  p99=    17.7 ms  batch=  2.2  cpu=  1.5c  gpu= 15.4%  PASS  ok
+
+=== RESULT ===
+sla_ms                  : 100
+sla_seconds             : 0.1000
+sla_percentile          : 95
+workload                : interactive
+max_qps                 : 128.00
+max_concurrent_inflight : 1.52
+think_time_s            : 5
+max_concurrent_users    : 641.5
+images_per_second       : 127.250
+
+users by think time (Little's Law, same measurement):
+  think_time=  0.0s        :        1.5 users
+  think_time=  1.0s        :      129.5 users
+  think_time=  2.0s        :      257.5 users
+  think_time=  5.0s        :      641.5 users
+  think_time= 10.0s        :     1281.5 users
+
+at the winning level:
+  requests_measured     : 2545
+  p50_ms                : 11.73
+  p95_ms                : 15.96
+  p99_ms                : 17.67
+  max_ms                : 20.00
+  avg_ms_per_image      : 11.867
+  mean_batch_size       : 2.21
+  queue_depth_max       : 3
+  p95_drift             : x1.005
+
+  where the p95 budget goes (p95 of each stage):
+    harness_lag_ms      : 1.06
+    preprocess_ms       : 3.71
+    queue_wait_ms       : 8.39
+    inference_ms        : 4.65
+
+  resources (79 samples over the window):
+    cpu_logical_count   : 96
+    cpu_cores_busy_mean : 1.50
+    cpu_cores_busy_max  : 2.19
+    proc_cpu_pct_mean   : 150.3
+    sys_cpu_pct_mean    : 1.6
+    rss_gib_max         : 1.48
+    threads_max         : 72
+    gpu_util_pct_mean   : 15.4
+    gpu_mem_util_pct_mean: 7.0
+    gpu_mem_used_gib_max: 1.06
+    gpu_power_w_mean    : 38.2
+    gpu_power_w_max     : 42.1
+    gpu_sm_clock_mhz_mean: 2040
+    gpu_temp_c_max      : 46
+    NOTE: gpu_util_pct is NVML's duty cycle - percent of time in which at least
+          one kernel was resident - NOT SM occupancy. It can read near 100% on a
+          GPU that is mostly idle between short kernels, so treat power draw and
+          SM clock as the honest signal of how much work is actually happening.
+
+  top1_correct          : 2070
+  top1_accuracy         : 0.8134
+  images                : 2545
+
+NOTE: never breached the SLA up to --max-level 128; the reported capacity is a floor, not a ceiling.
+
+=== LADDER ===
+      128.00 req/s   p95=    15.96 ms  n=  2545  PASS  ok

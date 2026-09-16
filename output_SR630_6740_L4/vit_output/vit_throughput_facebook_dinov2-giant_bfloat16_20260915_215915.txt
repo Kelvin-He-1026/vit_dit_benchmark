@@ -1,0 +1,53 @@
+Timestamp  : 20260915_215915
+Dataset    : ILSVRC/imagenet-1k
+Device     : cpu
+Server     : ThinkSystem SR630 V4
+CPU        : Intel(R) Xeon(R) 6740P
+CPU cores  : 96 logical, 96 physical, 2 sockets
+GPU        : NVIDIA L4 x2
+Mode       : offline throughput sweep (no SLA, no arrival model)
+Samples    : 256 preprocessed once and cycled
+Batch size : sweep 1,4,8,16,32
+Replicas   : sweep 1,2
+Precisions : sweep bf16,fp32,int8
+Measure    : 120 s per cell
+Warmup     : 5 s per cell
+Model      : facebook/dinov2-giant
+Dtype      : bfloat16
+Quant      : disabled
+Compile    : enabled
+Devices    : cpu
+Threads    : 24 per replica
+
+=== SWEEP (images/s) ===
+replicas  batch      img/s   ms/img  launch  gpu_ms   gpu%    gpuW  cores    cpuW   img/s/W
+       1      1        4.8  207.027  209.42       -      -       -   24.0   301.7      0.02
+       1      4       17.3   57.766  231.48       -      -       -   24.0   332.1      0.05
+       1      8       13.6   73.547  593.17       -      -       -   24.0   322.2      0.04
+       1     16       15.7   63.786 1020.37       -      -       -   24.0   325.7      0.05
+       1     32       15.1   66.178 2133.97       -      -       -   23.9   325.6      0.05
+       2      1       16.9  118.371  140.45       -      -       -   47.8  2513.0      0.01
+       2      4       31.6   63.387  258.33       -      -       -   47.8   386.0      0.08
+       2      8       34.1   58.727  494.87       -      -       -   47.5   385.3      0.09
+       2     16       37.1   53.843  913.77       -      -       -   47.1   384.1      0.10
+       2     32       25.3   79.153 2550.60       -      -       -   43.1   376.1      0.07
+
+=== RESULT ===
+images_per_second       : 37.145
+best_batch_size         : 16
+best_replicas           : 2
+ms_per_image_per_replica: 53.843
+images                  : 4496
+measured_s              : 121.040
+cpu_launch_ms           : 913.772
+
+at the best cell:
+  sys_cores_busy_mean   : 47.08
+  sys_cores_busy_max    : 48.10
+  sys_cpu_pct_mean      : 49.0
+  cpu_power_w_mean      : 384.1
+  cpu_logical_count     : 96
+
+  power_w_mean          : 384.1
+  power_source          : cpu RAPL package
+  images_per_second_per_w: 0.097
