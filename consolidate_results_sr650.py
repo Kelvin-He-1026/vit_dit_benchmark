@@ -427,6 +427,11 @@ def script_name(filename):
         ("dit_benchmark_", "dit_benchmark"),
         ("diag_vit_", "diag_vit_inference"),
         ("vit_benchmark_", "vit_benchmark"),
+        # vit_benchmark.py --throughput writes vit_throughput_*. Kept as its
+        # own script name rather than folded into vit_benchmark: a saturation
+        # sweep and an accuracy pass measure different things, and a mean
+        # ms/image from one is not comparable with the other.
+        ("vit_throughput_", "vit_benchmark_throughput"),
     ):
         if filename.startswith(prefix):
             return name

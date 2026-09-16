@@ -1,0 +1,57 @@
+Timestamp  : 20260916_031229
+Device     : cuda
+Server     : ThinkSystem SR650a V4
+CPU        : Intel(R) Xeon(R) 6787P
+CPU cores  : 172 logical, 172 physical, 2 sockets
+GPU        : NVIDIA RTX PRO 6000 Blackwell Server Edition x2
+Samples    : 100
+Resolution : 1024x1024
+Steps      : 20
+Warmup     : 1 untimed generation per cell
+Seed       : 42
+TF32       : disabled (matmul_precision=highest)
+Mode       : offline throughput sweep (no SLA, no arrival model)
+Batch size : sweep 1,2
+Replicas   : sweep 1
+Precisions : sweep bf16,fp8
+Measure    : 120 s per cell (floor; a generation is never cut short)
+Model      : PixArt-alpha/PixArt-Sigma-XL-2-1024-MS
+Dtype      : bfloat16
+Quant      : fp8 (w8a8, float8_e4m3 weights per tensor, activations quantised per forward, nn.Linear only, torchao 0.18.0)
+Compile    : enabled
+Devices    : cuda:0
+Threads    : 86 per replica
+
+=== SWEEP (images/s) ===
+replicas  batch     img/s    s/img  steps/s  denoise%   gpu%    gpuW  cores    cpuW   img/s/W
+       1      1     0.762     1.31    15.24       nan   98.6   376.2    3.2   300.8     0.001
+       1      2     0.738     1.35    14.76       nan   98.5   366.4    2.4   301.1     0.001
+
+=== RESULT ===
+images_per_second   : 0.762236
+avg_seconds_per_image: 1.3119
+denoising_steps_per_s: 15.245
+best_batch_size         : 1
+best_replicas           : 1
+images                  : 92
+measured_s              : 120.698
+denoise_s_per_image     : nan
+other_s_per_image       : nan
+denoise_pct             : nan
+
+at the best cell:
+  sys_cores_busy_mean   : 3.22
+  sys_cores_busy_max    : 13.59
+  sys_cpu_pct_mean      : 1.9
+  cpu_power_w_mean      : 300.8
+  gpu_util_pct_mean     : 98.6
+  gpu_mem_used_gib_max  : 15.77
+  gpu_power_w_mean      : 376.2
+  gpu_power_w_max       : 461.3
+  gpu_sm_clock_mhz_mean : 1963
+  gpu_temp_c_max        : 87
+  cpu_logical_count     : 172
+
+  power_w_mean          : 677.0
+  power_source          : gpu NVML board + cpu RAPL package
+  images_per_second_per_w: 0.001126

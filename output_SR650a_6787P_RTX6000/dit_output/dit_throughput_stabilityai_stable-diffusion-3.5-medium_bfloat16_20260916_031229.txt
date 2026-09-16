@@ -1,0 +1,57 @@
+Timestamp  : 20260916_031229
+Device     : cuda
+Server     : ThinkSystem SR650a V4
+CPU        : Intel(R) Xeon(R) 6787P
+CPU cores  : 172 logical, 172 physical, 2 sockets
+GPU        : NVIDIA RTX PRO 6000 Blackwell Server Edition x2
+Samples    : 100
+Resolution : 1024x1024
+Steps      : 20
+Warmup     : 1 untimed generation per cell
+Seed       : 42
+TF32       : disabled (matmul_precision=highest)
+Mode       : offline throughput sweep (no SLA, no arrival model)
+Batch size : sweep 1,2
+Replicas   : sweep 1
+Precisions : sweep bf16,fp8
+Measure    : 120 s per cell (floor; a generation is never cut short)
+Model      : stabilityai/stable-diffusion-3.5-medium
+Dtype      : bfloat16
+Quant      : disabled
+Compile    : enabled
+Devices    : cuda:0
+Threads    : 86 per replica
+
+=== SWEEP (images/s) ===
+replicas  batch     img/s    s/img  steps/s  denoise%   gpu%    gpuW  cores    cpuW   img/s/W
+       1      1     0.425     2.36     8.49      80.0   98.6   320.8    1.6   302.5     0.001
+       1      2     0.433     2.31     8.66      47.5   98.8   331.9    1.5   302.4     0.001
+
+=== RESULT ===
+images_per_second   : 0.432837
+avg_seconds_per_image: 2.3103
+denoising_steps_per_s: 8.657
+best_batch_size         : 2
+best_replicas           : 1
+images                  : 54
+measured_s              : 124.758
+denoise_s_per_image     : 1.0983
+other_s_per_image       : 1.2121
+denoise_pct             : 47.5
+
+at the best cell:
+  sys_cores_busy_mean   : 1.52
+  sys_cores_busy_max    : 12.56
+  sys_cpu_pct_mean      : 0.9
+  cpu_power_w_mean      : 302.4
+  gpu_util_pct_mean     : 98.8
+  gpu_mem_used_gib_max  : 25.94
+  gpu_power_w_mean      : 331.9
+  gpu_power_w_max       : 460.9
+  gpu_sm_clock_mhz_mean : 1575
+  gpu_temp_c_max        : 88
+  cpu_logical_count     : 172
+
+  power_w_mean          : 634.3
+  power_source          : gpu NVML board + cpu RAPL package
+  images_per_second_per_w: 0.000682

@@ -1,0 +1,57 @@
+Timestamp  : 20260916_031229
+Device     : cuda
+Server     : ThinkSystem SR650a V4
+CPU        : Intel(R) Xeon(R) 6787P
+CPU cores  : 172 logical, 172 physical, 2 sockets
+GPU        : NVIDIA RTX PRO 6000 Blackwell Server Edition x2
+Samples    : 100
+Resolution : 1024x1024
+Steps      : 20
+Warmup     : 1 untimed generation per cell
+Seed       : 42
+TF32       : disabled (matmul_precision=highest)
+Mode       : offline throughput sweep (no SLA, no arrival model)
+Batch size : sweep 1,2
+Replicas   : sweep 1
+Precisions : sweep bf16,fp8
+Measure    : 120 s per cell (floor; a generation is never cut short)
+Model      : Efficient-Large-Model/Sana_600M_1024px_diffusers
+Dtype      : bfloat16
+Quant      : fp8 (w8a8, float8_e4m3 weights per tensor, activations quantised per forward, nn.Linear only, torchao 0.18.0)
+Compile    : enabled
+Devices    : cuda:0
+Threads    : 86 per replica
+
+=== SWEEP (images/s) ===
+replicas  batch     img/s    s/img  steps/s  denoise%   gpu%    gpuW  cores    cpuW   img/s/W
+       1      1     2.401     0.42    48.02      10.4   90.9   362.0    8.0  2478.3     0.001
+       1      2     2.622     0.38    52.44       6.4   93.3   375.4    5.8   301.2     0.004
+
+=== RESULT ===
+images_per_second   : 2.621828
+avg_seconds_per_image: 0.3814
+denoising_steps_per_s: 52.437
+best_batch_size         : 2
+best_replicas           : 1
+images                  : 316
+measured_s              : 120.527
+denoise_s_per_image     : 0.0243
+other_s_per_image       : 0.3571
+denoise_pct             : 6.4
+
+at the best cell:
+  sys_cores_busy_mean   : 5.82
+  sys_cores_busy_max    : 17.20
+  sys_cpu_pct_mean      : 3.4
+  cpu_power_w_mean      : 301.2
+  gpu_util_pct_mean     : 93.3
+  gpu_mem_used_gib_max  : 13.85
+  gpu_power_w_mean      : 375.4
+  gpu_power_w_max       : 461.6
+  gpu_sm_clock_mhz_mean : 1989
+  gpu_temp_c_max        : 88
+  cpu_logical_count     : 172
+
+  power_w_mean          : 676.6
+  power_source          : gpu NVML board + cpu RAPL package
+  images_per_second_per_w: 0.003875

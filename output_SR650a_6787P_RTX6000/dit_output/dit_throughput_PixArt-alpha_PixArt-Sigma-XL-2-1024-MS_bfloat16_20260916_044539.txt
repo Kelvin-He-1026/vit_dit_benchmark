@@ -1,0 +1,55 @@
+Timestamp  : 20260916_044539
+Device     : cpu
+Server     : ThinkSystem SR650a V4
+CPU        : Intel(R) Xeon(R) 6787P
+CPU cores  : 172 logical, 172 physical, 2 sockets
+GPU        : NVIDIA RTX PRO 6000 Blackwell Server Edition x2
+Samples    : 30
+Resolution : 1024x1024
+Steps      : 20
+Warmup     : 1 untimed generation per cell
+Seed       : 42
+TF32       : disabled (matmul_precision=highest)
+Mode       : offline throughput sweep (no SLA, no arrival model)
+Batch size : sweep 1,2
+Replicas   : sweep 1,2,4
+Precisions : sweep bf16,fp8
+Measure    : 120 s per cell (floor; a generation is never cut short)
+Model      : PixArt-alpha/PixArt-Sigma-XL-2-1024-MS
+Dtype      : bfloat16
+Quant      : disabled
+Compile    : enabled
+Devices    : cpu
+Threads    : 43 per replica
+
+=== SWEEP (images/s) ===
+replicas  batch     img/s    s/img  steps/s  denoise%   gpu%    gpuW  cores    cpuW   img/s/W
+       1      1     0.027    37.19     0.54       nan      -       -   40.4   382.0     0.000
+       1      2     0.032    30.94     0.65       nan      -       -   40.0   388.4     0.000
+       2      1     0.054    37.21     1.08       nan      -       -   80.5  2222.1     0.000
+       2      2     0.060    33.28     1.20       nan      -       -   78.6  2446.6     0.000
+       4      1     0.104    38.41     2.08       nan      -       -  159.8   636.8     0.000
+       4      2     0.113    35.42     2.26       nan      -       -  151.9   642.0     0.000
+
+=== RESULT ===
+images_per_second   : 0.112945
+avg_seconds_per_image: 35.4155
+denoising_steps_per_s: 2.259
+best_batch_size         : 2
+best_replicas           : 4
+images                  : 16
+measured_s              : 141.662
+denoise_s_per_image     : nan
+other_s_per_image       : nan
+denoise_pct             : nan
+
+at the best cell:
+  sys_cores_busy_mean   : 151.91
+  sys_cores_busy_max    : 162.37
+  sys_cpu_pct_mean      : 88.3
+  cpu_power_w_mean      : 642.0
+  cpu_logical_count     : 172
+
+  power_w_mean          : 642.0
+  power_source          : cpu RAPL package
+  images_per_second_per_w: 0.000176

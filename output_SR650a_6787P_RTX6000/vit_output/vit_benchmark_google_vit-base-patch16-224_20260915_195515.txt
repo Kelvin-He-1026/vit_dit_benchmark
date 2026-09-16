@@ -1,0 +1,25 @@
+Timestamp  : 20260915_195515
+Model      : google/vit-base-patch16-224
+Dataset    : ILSVRC/imagenet-1k
+Device     : cuda
+Server     : ThinkSystem SR650a V4
+CPU        : Intel(R) Xeon(R) 6787P
+CPU cores  : 172 logical, 172 physical, 2 sockets
+GPU        : NVIDIA RTX PRO 6000 Blackwell Server Edition x2
+Dtype      : bfloat16
+Quant      : disabled
+Mode       : accuracy + forward time
+Samples    : 2000
+Batch size : 32
+Warmup     : 3
+Compile    : enabled
+Threads    : 172
+Shard      : 0 of 1
+
+=== RESULT ===
+images                  : 2000
+forward_time_s          : 0.3691
+images_per_second       : 5418.920
+avg_forward_ms_per_image: 0.185
+top1_correct            : 1622
+top1_accuracy            : 0.8110

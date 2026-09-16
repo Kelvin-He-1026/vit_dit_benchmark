@@ -1,0 +1,57 @@
+Timestamp  : 20260915_200755
+Dataset    : ILSVRC/imagenet-1k
+Device     : cuda
+Server     : ThinkSystem SR650a V4
+CPU        : Intel(R) Xeon(R) 6787P
+CPU cores  : 172 logical, 172 physical, 2 sockets
+GPU        : NVIDIA RTX PRO 6000 Blackwell Server Edition x2
+Mode       : offline throughput sweep (no SLA, no arrival model)
+Samples    : 256 preprocessed once and cycled
+Batch size : sweep 1,4,8,16,32,64
+Replicas   : sweep 1
+Precisions : sweep bf16,fp8,int8,fp4
+Measure    : 120 s per cell
+Warmup     : 5 s per cell
+Model      : google/vit-base-patch16-224
+Dtype      : bfloat16
+Quant      : int8 (w8a8, int8 weights per output channel, activations quantised per forward, nn.Linear only, torchao 0.18.0)
+Compile    : enabled
+Devices    : cuda:0
+Threads    : 86 per replica
+
+=== SWEEP (images/s) ===
+replicas  batch      img/s   ms/img  launch  gpu_ms   gpu%    gpuW  cores    cpuW   img/s/W
+       1      1     1437.2    0.696    0.70    1.32  100.0   234.3    1.0   302.0      2.68
+       1      4     3522.6    0.284    0.81    1.88  100.0   328.6    1.0   301.6      5.59
+       1      8     4235.0    0.236    0.84    2.48  100.0   289.7    1.0   302.5      7.15
+       1     16     4860.8    0.206    0.84    3.84  100.0   290.6    1.0   302.9      8.19
+       1     32     4964.2    0.201    0.84    6.94  100.0   291.1    1.0  2469.5      1.80
+       1     64     4539.2    0.220    0.83   14.42  100.0   296.7    1.0  2451.8      1.65
+
+=== RESULT ===
+images_per_second       : 4964.234
+best_batch_size         : 32
+best_replicas           : 1
+ms_per_image_per_replica: 0.201
+images                  : 600352
+measured_s              : 120.935
+cpu_launch_ms           : 0.840
+gpu_ms                  : 6.938
+bound_by                : device (gpu/launch = 8.26)
+
+at the best cell:
+  sys_cores_busy_mean   : 1.03
+  sys_cores_busy_max    : 1.20
+  sys_cpu_pct_mean      : 0.6
+  cpu_power_w_mean      : 2469.5
+  gpu_util_pct_mean     : 100.0
+  gpu_mem_used_gib_max  : 1.93
+  gpu_power_w_mean      : 291.1
+  gpu_power_w_max       : 298.7
+  gpu_sm_clock_mhz_mean : 1496
+  gpu_temp_c_max        : 85
+  cpu_logical_count     : 172
+
+  power_w_mean          : 2760.6
+  power_source          : gpu NVML board + cpu RAPL package
+  images_per_second_per_w: 1.798

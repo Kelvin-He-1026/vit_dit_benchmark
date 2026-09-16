@@ -42,3 +42,10 @@ numpy==2.5.2
 #                 deprecated project - do not install that one.
 psutil==7.2.2
 nvidia-ml-py==13.610.43
+
+# W8A8 post-training quantisation (--quant int8 / fp8) in vit_benchmark.py and
+# server_vit_benchmark.py. Optional: without it those runs are skipped with a
+# note, everything else is unaffected. Install with --no-deps, or pip resolves
+# its own torch and replaces the pin above:
+#   pip install --no-deps torchao==0.18.0
+torchao==0.18.0
