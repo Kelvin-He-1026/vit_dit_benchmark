@@ -1,0 +1,61 @@
+Timestamp  : 20260917_055527
+Script     : server_dit_benchmark
+Model      : Efficient-Large-Model/Sana_1600M_1024px_diffusers
+Dataset    : byliutao/coco2014val_10k (prompts)
+Device     : cpu
+Server     : ThinkSystem SR650a V4
+CPU        : Intel(R) Xeon(R) 6787P
+CPU cores  : 172 logical, 172 physical, 2 sockets
+GPU        : NVIDIA RTX PRO 6000 Blackwell Server Edition x2
+Dtype      : bfloat16
+Quant      : disabled
+TF32       : disabled
+Resolution : 1024x1024
+Steps      : 20
+Seed       : 42
+Replicas   : 2
+Devices    : cpu
+CPU bind   : 0-171
+Threads    : 86
+Workload   : interactive
+Think time : 30 s
+SLA        : p95 end-to-end <= 30 s
+Batch size : 1 (max)
+Batch wait : 0 ms
+Drop after : 2x SLA queued (60 s)
+Requests   : 50 scored + 10 warmup per level
+Calibrate  : 5 generations per replica
+Early stop : enabled
+Compile    : enabled (torch.compile on the transformer submodule)
+  replica 0: cpu, 86 intra-op threads, 86 cores visible, cpu
+  replica 1: cpu, 86 intra-op threads, 86 cores visible, cpu
+  replica 0: warmed batch 1..1 in 119 s
+  replica 1: warmed batch 1..1 in 114 s
+
+=== CALIBRATION (batch 1, sequential, per replica) ===
+  replica 0: service mean 50.667 s  text 4.279  denoise 41.850  decode 4.533  jpeg 0.004
+  replica 1: service mean 55.670 s  text 5.469  denoise 45.996  decode 4.201  jpeg 0.004
+  service_mean_s      : 53.168
+  service_p95_s       : 60.255
+  service_cv2         : 0.0083
+  mu_rps              : 0.0376  (2.26 req/min, batch 1, all replicas)
+  images saved to     : /home/lhe4/vit_dit_benchmark/output_SR650a_6787P_RTX6000/server_dit_output/server_dit_Efficient-Large-Model_Sana_1600M_1024px_diffusers_bfloat16_cpu2r_20260917_055527_images
+Monitor    : host=psutil device=off cpu_power=rapl every 1000 ms
+
+=== SWEEP ===
+skipped: calibration p95 service time 60.26 s already exceeds the 30 s SLA, so no arrival rate can pass (--force-sweep to measure anyway)
+
+=== RESULT ===
+sla_seconds             : 30
+sla_percentile          : 95
+workload                : interactive
+calibrated_mu_rps       : 0.03762
+calibrated_service_s    : 53.1682
+replica_rss_gib_max     : 10.32
+max_qps                 : 0
+max_requests_per_minute : 0
+max_concurrent_users    : 0
+verdict                 : SLA unmet at every level tried
+
+=== LADDER ===
+  req/min   rho   p50 s   p95 s   p99 s  mean s  pred s  img/min attain% drop batch qmax  cores  gpu%      W  verdict

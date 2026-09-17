@@ -221,7 +221,19 @@ def apply(model, recipe):
         config = (Int8DynamicActivationInt8WeightConfig() if recipe == "int8"
                   else Float8DynamicActivationFloat8WeightConfig())
     quantize_(model, config, filter_fn=_quantisable)
+    if recipe == "fp4":
+        # torchao's nvfp4_linear flattens the activation with .view(), which
+        # raises on a non-contiguous input. ViTs never send one, but DiT
+        # attention does (Sana's attn1 gets a transposed tensor). contiguous()
+        # is a no-op on an already contiguous tensor, and Inductor folds it.
+        for fqn, module in model.named_modules():
+            if _quantisable(module, fqn):
+                module.register_forward_pre_hook(_contiguous_input)
     return model
+
+
+def _contiguous_input(_module, args):
+    return (args[0].contiguous(),) + tuple(args[1:])
 
 
 def count(model):

@@ -1,0 +1,59 @@
+Timestamp  : 20260917_053429
+Script     : server_dit_benchmark
+Model      : stabilityai/stable-diffusion-3.5-medium
+Dataset    : byliutao/coco2014val_10k (prompts)
+Device     : cpu
+Server     : ThinkSystem SR650a V4
+CPU        : Intel(R) Xeon(R) 6787P
+CPU cores  : 172 logical, 172 physical, 2 sockets
+GPU        : NVIDIA RTX PRO 6000 Blackwell Server Edition x2
+Dtype      : bfloat16
+Quant      : disabled
+TF32       : disabled
+Resolution : 1024x1024
+Steps      : 20
+Seed       : 42
+Replicas   : 1
+Devices    : cpu
+CPU bind   : 0-85
+Threads    : 86
+Workload   : interactive
+Think time : 30 s
+SLA        : p95 end-to-end <= 30 s
+Batch size : 1 (max)
+Batch wait : 0 ms
+Drop after : 2x SLA queued (60 s)
+Requests   : 50 scored + 10 warmup per level
+Calibrate  : 5 generations per replica
+Early stop : enabled
+NOTE       : stabilityai/stable-diffusion-3.5-medium is gated; `hf auth login` must have access
+Compile    : enabled (torch.compile on the transformer submodule)
+  replica 0: cpu, 86 intra-op threads, 86 cores visible, cpu
+  replica 0: warmed batch 1..1 in 306 s
+
+=== CALIBRATION (batch 1, sequential, per replica) ===
+  replica 0: service mean 141.545 s  text 14.146  denoise 123.555  decode 3.840  jpeg 0.004
+  service_mean_s      : 141.545
+  service_p95_s       : 147.949
+  service_cv2         : 0.0013
+  mu_rps              : 0.0071  (0.42 req/min, batch 1, all replicas)
+  images saved to     : /home/lhe4/vit_dit_benchmark/output_SR650a_6787P_RTX6000/server_dit_output/server_dit_stabilityai_stable-diffusion-3.5-medium_bfloat16_cpu1r_20260917_053429_images
+Monitor    : host=psutil device=off cpu_power=rapl every 1000 ms
+
+=== SWEEP ===
+skipped: calibration p95 service time 147.95 s already exceeds the 30 s SLA, so no arrival rate can pass (--force-sweep to measure anyway)
+
+=== RESULT ===
+sla_seconds             : 30
+sla_percentile          : 95
+workload                : interactive
+calibrated_mu_rps       : 0.00706
+calibrated_service_s    : 141.5455
+replica_rss_gib_max     : 18.64
+max_qps                 : 0
+max_requests_per_minute : 0
+max_concurrent_users    : 0
+verdict                 : SLA unmet at every level tried
+
+=== LADDER ===
+  req/min   rho   p50 s   p95 s   p99 s  mean s  pred s  img/min attain% drop batch qmax  cores  gpu%      W  verdict

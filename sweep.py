@@ -170,6 +170,10 @@ class ReplicaPool:
                 daemon=True, name=f"replica{i}",
             )
             proc.start()
+            # The child has its own copy now. Keeping this one open means a
+            # replica that dies never produces EOF on parent_conn, and the
+            # recv() below blocks forever instead of raising.
+            child_conn.close()
             self.conns.append(parent_conn)
             self.procs.append(proc)
         self.settings = []

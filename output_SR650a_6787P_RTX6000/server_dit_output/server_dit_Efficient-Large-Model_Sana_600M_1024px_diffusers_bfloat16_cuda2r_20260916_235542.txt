@@ -1,0 +1,136 @@
+Timestamp  : 20260916_235542
+Script     : server_dit_benchmark
+Model      : Efficient-Large-Model/Sana_600M_1024px_diffusers
+Dataset    : byliutao/coco2014val_10k (prompts)
+Device     : cuda
+Server     : ThinkSystem SR650a V4
+CPU        : Intel(R) Xeon(R) 6787P
+CPU cores  : 172 logical, 172 physical, 2 sockets
+GPU        : NVIDIA RTX PRO 6000 Blackwell Server Edition x2
+Dtype      : bfloat16
+Quant      : disabled
+TF32       : disabled
+Resolution : 1024x1024
+Steps      : 20
+Seed       : 42
+Replicas   : 2
+Devices    : cuda:0,cuda:1
+CPU bind   : 43-85,129-171
+Threads    : 43
+Workload   : interactive
+Think time : 30 s
+SLA        : p95 end-to-end <= 30 s
+Batch size : 1 (max)
+Batch wait : 0 ms
+Drop after : 2x SLA queued (60 s)
+Requests   : 200 scored + 10 warmup per level
+Calibrate  : 5 generations per replica
+Early stop : enabled
+GPU placement: full pipeline resident on GPU
+Compile    : enabled (torch.compile on the transformer submodule)
+  replica 0: cuda:0, 43 intra-op threads, 43 cores visible, full pipeline resident on GPU
+  replica 1: cuda:1, 43 intra-op threads, 43 cores visible, full pipeline resident on GPU
+  replica 0: warmed batch 1..1 in 6 s
+  replica 1: warmed batch 1..1 in 29 s
+
+=== CALIBRATION (batch 1, sequential, per replica) ===
+  replica 0: service mean 0.412 s  text 0.053  denoise 0.272  decode 0.084  jpeg 0.004
+  replica 1: service mean 0.412 s  text 0.054  denoise 0.270  decode 0.084  jpeg 0.004
+  service_mean_s      : 0.412
+  service_p95_s       : 0.418
+  service_cv2         : 0.0001
+  mu_rps              : 4.8544  (291.26 req/min, batch 1, all replicas)
+  images saved to     : /home/lhe4/vit_dit_benchmark/output_SR650a_6787P_RTX6000/server_dit_output/server_dit_Efficient-Large-Model_Sana_600M_1024px_diffusers_bfloat16_cuda2r_20260916_235542_images
+Monitor    : host=psutil device=2x NVIDIA RTX PRO 6000 Blackwell Server Edition cpu_power=rapl every 1000 ms
+
+=== SWEEP ===
+->  145.632 req/min  rho= 0.50  210 arrivals, ~1 min unless stopped early
+   p50=   0.41  p95=   0.87  p99=   1.09 s  ok=200/200  drop=0  batch=1.00  thr=139.93 img/min  PASS  ok
+->  203.884 req/min  rho= 0.70  210 arrivals, ~1 min unless stopped early
+   p50=   0.56  p95=   1.19  p99=   1.47 s  ok=200/200  drop=0  batch=1.00  thr=195.50 img/min  PASS  ok
+->  247.574 req/min  rho= 0.85  210 arrivals, ~1 min unless stopped early
+   p50=   1.05  p95=   2.06  p99=   2.36 s  ok=200/200  drop=0  batch=1.00  thr=237.05 img/min  PASS  ok
+->  291.263 req/min  rho= 1.00  210 arrivals, ~1 min unless stopped early
+   p50=   5.99  p95=  10.38  p99=  11.07 s  ok=200/200  drop=0  batch=1.00  thr=229.43 img/min  PASS  ok
+->  349.516 req/min  rho= 1.20  210 arrivals, ~1 min unless stopped early
+   p50=  10.26  p95=  17.90  p99=  18.44 s  ok=200/200  drop=0  batch=1.00  thr=225.00 img/min  FAIL  met SLA but not steady state (p95 drift x1.85)
+->  319.063 req/min  rho= 1.10  210 arrivals, ~1 min unless stopped early
+   p50=   8.66  p95=  15.04  p99=  15.71 s  ok=200/200  drop=0  batch=1.00  thr=224.59 img/min  FAIL  met SLA but not steady state (p95 drift x1.82)
+->  304.846 req/min  rho= 1.05  210 arrivals, ~1 min unless stopped early
+   p50=   7.86  p95=  13.68  p99=  14.38 s  ok=200/200  drop=0  batch=1.00  thr=223.10 img/min  PASS  ok
+
+=== RESULT ===
+sla_seconds             : 30
+sla_percentile          : 95
+workload                : interactive
+calibrated_mu_rps       : 4.85439
+calibrated_service_s    : 0.4120
+replica_rss_gib_max     : 7.29
+gpu_peak_alloc_gib      : 8.22
+max_qps                 : 5.08077
+max_requests_per_minute : 304.846
+max_images_per_hour     : 18290.8
+rho_at_capacity         : 1.047
+max_concurrent_inflight : 42.02
+think_time_s            : 30
+max_concurrent_users    : 194.4
+images_per_second       : 3.71837
+goodput_rps             : 3.71837
+sla_attainment_pct      : 100.0
+
+users by think time (Little's Law, same measurement):
+  think_time=  0.0s        :       42.0 users
+  think_time= 15.0s        :      118.2 users
+  think_time= 30.0s        :      194.4 users
+  think_time= 60.0s        :      346.9 users
+
+at the winning level:
+  requests_measured     : 200
+  dropped               : 0
+  p50_ms                : 7864.7
+  p90_ms                : 13222.4
+  p95_ms                : 13678.7
+  p99_ms                : 14380.6
+  max_ms                : 14479.1
+  avg_ms_per_image      : 8270.8
+  predicted_mean_ms     : inf
+  mean_batch_size       : 1.00
+  queue_depth_max       : 52
+  p95_drift             : x1.795
+
+  where the budget goes:
+    harness_lag_ms      : 1.6
+    queue_wait_ms       : 13168.9
+    inference_ms        : 542.6
+    ipc_ms              : 1.8
+    text_encode_ms      : 51.9
+    denoise_ms          : 359.2
+    vae_decode_ms       : 109.6
+    jpeg_encode_ms      : 3.4
+    (queue/inference/ipc/lag are p95; the four stages are means)
+
+  resources (53 samples over the window):
+    sys_cores_busy_mean : 7.52
+    sys_cores_busy_max  : 7.91
+    sys_cpu_pct_mean    : 4.4
+    cpu_power_w_mean    : 316.0
+    gpu_util_pct_mean   : 90.4
+    gpu_mem_used_gib_max: 22.76
+    gpu_power_w_mean    : 572.1
+    gpu_power_w_max     : 595.9
+    gpu_sm_clock_mhz_mean: 1730
+    gpu_temp_c_max      : 86
+    power_w_mean        : 888.1
+    power_source        : gpu NVML board + cpu RAPL package
+    images_per_second_per_w: 0.004187
+    joules_per_image    : 238.9
+
+=== LADDER ===
+  req/min   rho   p50 s   p95 s   p99 s  mean s  pred s  img/min attain% drop batch qmax  cores  gpu%      W  verdict
+  145.632  0.50    0.41    0.87    1.09    0.51    0.48   139.93   100.0    0  1.00    3    4.4  43.6  815.9  PASS ok
+  203.884  0.70    0.56    1.19    1.47    0.64    0.61   195.50   100.0    0  1.00    4    6.1  62.5  962.5  PASS ok
+  247.574  0.85    1.05    2.06    2.36    1.11    0.95   237.05   100.0    0  1.00    8    7.6  78.9 1011.6  PASS ok
+  291.263  1.00    5.99   10.38   11.07    6.37     inf   229.43   100.0    0  1.00   41    7.7  90.3  910.5  PASS ok
+  304.846  1.05    7.86   13.68   14.38    8.27     inf   223.10   100.0    0  1.00   52    7.5  90.4  888.1  PASS ok
+  319.063  1.10    8.66   15.04   15.71    9.02     inf   224.59   100.0    0  1.00   59    7.5  90.1  893.4  FAIL met SLA but not steady state (p95 drift x1.82)
+  349.516  1.20   10.26   17.90   18.44   10.57     inf   225.00   100.0    0  1.00   70    7.6  90.3  898.1  FAIL met SLA but not steady state (p95 drift x1.85)

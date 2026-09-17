@@ -1,0 +1,130 @@
+Timestamp  : 20260916_161738
+Script     : server_dit_benchmark
+Model      : PixArt-alpha/PixArt-Sigma-XL-2-1024-MS
+Dataset    : byliutao/coco2014val_10k (prompts)
+Device     : cuda
+Server     : ThinkSystem SR650a V4
+CPU        : Intel(R) Xeon(R) 6787P
+CPU cores  : 172 logical, 172 physical, 2 sockets
+GPU        : NVIDIA RTX PRO 6000 Blackwell Server Edition x2
+Dtype      : bfloat16
+Quant      : disabled
+TF32       : disabled
+Resolution : 1024x1024
+Steps      : 20
+Seed       : 42
+Replicas   : 1
+Devices    : cuda:0
+CPU bind   : 43-85
+Threads    : 43
+Workload   : interactive
+Think time : 30 s
+SLA        : p95 end-to-end <= 30 s
+Batch size : 1 (max)
+Batch wait : 0 ms
+Drop after : 2x SLA queued (60 s)
+Requests   : 200 scored + 10 warmup per level
+Calibrate  : 5 generations per replica
+Early stop : enabled
+GPU placement: full pipeline resident on GPU
+Compile    : enabled (torch.compile on the transformer submodule)
+  replica 0: cuda:0, 43 intra-op threads, 43 cores visible, full pipeline resident on GPU
+  replica 0: warmed batch 1..1 in 8 s
+
+=== CALIBRATION (batch 1, sequential, per replica) ===
+  replica 0: service mean 1.490 s  text 0.030  denoise 1.326  decode 0.130  jpeg 0.003
+  service_mean_s      : 1.490
+  service_p95_s       : 1.551
+  service_cv2         : 0.0010
+  mu_rps              : 0.6714  (40.28 req/min, batch 1, all replicas)
+  images saved to     : /home/lhe4/vit_dit_benchmark/output_SR650a_6787P_RTX6000/server_dit_output/server_dit_PixArt-alpha_PixArt-Sigma-XL-2-1024-MS_bfloat16_cuda1r_20260916_161738_images
+Monitor    : host=psutil device=NVIDIA RTX PRO 6000 Blackwell Server Edition cpu_power=rapl every 1000 ms
+
+=== SWEEP ===
+->   20.141 req/min  rho= 0.50  210 arrivals, ~10 min unless stopped early
+   p50=   1.78  p95=   5.79  p99=   7.53 s  ok=200/200  drop=0  batch=1.00  thr=19.40 img/min  PASS  ok
+->   28.197 req/min  rho= 0.70  210 arrivals, ~7 min unless stopped early
+   p50=   3.70  p95=   9.64  p99=  11.45 s  ok=200/200  drop=0  batch=1.00  thr=27.13 img/min  PASS  ok
+->   34.239 req/min  rho= 0.85  210 arrivals, ~6 min unless stopped early
+   p50=  13.21  p95=  23.14  p99=  25.28 s  ok=200/200  drop=0  batch=1.00  thr=32.49 img/min  PASS  ok
+->   40.281 req/min  rho= 1.00  210 arrivals, ~5 min unless stopped early
+   p50=  20.77  p95=  35.20  p99=  37.23 s  ok=50/200  drop=0  batch=1.00  thr=29.99 img/min  FAIL  stopped early: 12 scored misses already put p95 over the SLA
+->   37.138 req/min  rho= 0.92  210 arrivals, ~6 min unless stopped early
+   p50=  24.40  p95=  32.34  p99=  33.91 s  ok=74/200  drop=0  batch=1.00  thr=30.97 img/min  FAIL  stopped early: 12 scored misses already put p95 over the SLA
+->   35.659 req/min  rho= 0.89  210 arrivals, ~6 min unless stopped early
+   p50=  22.96  p95=  31.39  p99=  34.45 s  ok=158/200  drop=0  batch=1.00  thr=31.91 img/min  FAIL  stopped early: 12 scored misses already put p95 over the SLA
+
+=== RESULT ===
+sla_seconds             : 30
+sla_percentile          : 95
+workload                : interactive
+calibrated_mu_rps       : 0.67136
+calibrated_service_s    : 1.4895
+replica_rss_gib_max     : 18.20
+gpu_peak_alloc_gib      : 12.61
+max_qps                 : 0.57065
+max_requests_per_minute : 34.239
+max_images_per_hour     : 2054.4
+rho_at_capacity         : 0.850
+max_concurrent_inflight : 8.11
+think_time_s            : 30
+max_concurrent_users    : 25.2
+images_per_second       : 0.54146
+goodput_rps             : 0.54146
+sla_attainment_pct      : 100.0
+
+users by think time (Little's Law, same measurement):
+  think_time=  0.0s        :        8.1 users
+  think_time= 15.0s        :       16.7 users
+  think_time= 30.0s        :       25.2 users
+  think_time= 60.0s        :       42.3 users
+
+at the winning level:
+  requests_measured     : 200
+  dropped               : 0
+  p50_ms                : 13209.6
+  p90_ms                : 21028.9
+  p95_ms                : 23135.9
+  p99_ms                : 25280.9
+  max_ms                : 26608.7
+  avg_ms_per_image      : 14212.4
+  predicted_mean_ms     : 5713.9
+  mean_batch_size       : 1.00
+  queue_depth_max       : 14
+  p95_drift             : x1.164
+
+  where the budget goes:
+    harness_lag_ms      : 2.0
+    queue_wait_ms       : 21276.7
+    inference_ms        : 1858.8
+    ipc_ms              : 1.1
+    text_encode_ms      : 35.3
+    denoise_ms          : 1637.3
+    vae_decode_ms       : 145.5
+    jpeg_encode_ms      : 3.3
+    (queue/inference/ipc/lag are p95; the four stages are means)
+
+  resources (369 samples over the window):
+    sys_cores_busy_mean : 1.92
+    sys_cores_busy_max  : 2.75
+    sys_cpu_pct_mean    : 1.1
+    cpu_power_w_mean    : 302.9
+    gpu_util_pct_mean   : 97.5
+    gpu_mem_used_gib_max: 16.44
+    gpu_power_w_mean    : 289.5
+    gpu_power_w_max     : 355.9
+    gpu_sm_clock_mhz_mean: 1657
+    gpu_temp_c_max      : 87
+    power_w_mean        : 592.4
+    power_source        : gpu NVML board + cpu RAPL package
+    images_per_second_per_w: 0.000914
+    joules_per_image    : 1094.0
+
+=== LADDER ===
+  req/min   rho   p50 s   p95 s   p99 s  mean s  pred s  img/min attain% drop batch qmax  cores  gpu%      W  verdict
+   20.141  0.50    1.78    5.79    7.53    2.45    2.23    19.40   100.0    0  1.00    4    1.0  48.7  981.1  PASS ok
+   28.197  0.70    3.70    9.64   11.45    4.29    3.23    27.13   100.0    0  1.00    7    1.5  73.6  585.6  PASS ok
+   34.239  0.85   13.21   23.14   25.28   14.21    5.71    32.49   100.0    0  1.00   14    1.9  97.5  592.4  PASS ok
+   35.659  0.89   22.96   31.39   34.45   22.62    7.24    31.91    92.4    0  1.00   21    1.9  97.9 1473.3  FAIL stopped early: 12 scored misses already put p95 over the SLA
+   37.138  0.92   24.40   32.34   33.91   22.81   10.30    30.97    83.8    0  1.00   19    1.9  97.9 2419.7  FAIL stopped early: 12 scored misses already put p95 over the SLA
+   40.281  1.00   20.77   35.20   37.23   22.95     inf    29.99    76.0    0  1.00   22    1.9  96.6  590.1  FAIL stopped early: 12 scored misses already put p95 over the SLA

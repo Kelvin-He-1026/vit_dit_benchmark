@@ -1,0 +1,68 @@
+Timestamp  : 20260917_070443
+Script     : server_dit_benchmark
+Model      : stabilityai/stable-diffusion-3.5-medium
+Dataset    : byliutao/coco2014val_10k (prompts)
+Device     : cpu
+Server     : ThinkSystem SR650a V4
+CPU        : Intel(R) Xeon(R) 6787P
+CPU cores  : 172 logical, 172 physical, 2 sockets
+GPU        : NVIDIA RTX PRO 6000 Blackwell Server Edition x2
+Dtype      : bfloat16
+Quant      : disabled
+TF32       : disabled
+Resolution : 1024x1024
+Steps      : 20
+Seed       : 42
+Replicas   : 4
+Devices    : cpu
+CPU bind   : 0-171
+Threads    : 43
+Workload   : interactive
+Think time : 30 s
+SLA        : p95 end-to-end <= 30 s
+Batch size : 1 (max)
+Batch wait : 0 ms
+Drop after : 2x SLA queued (60 s)
+Requests   : 50 scored + 10 warmup per level
+Calibrate  : 5 generations per replica
+Early stop : enabled
+NOTE       : stabilityai/stable-diffusion-3.5-medium is gated; `hf auth login` must have access
+Compile    : enabled (torch.compile on the transformer submodule)
+  replica 0: cpu, 43 intra-op threads, 43 cores visible, cpu
+  replica 1: cpu, 43 intra-op threads, 43 cores visible, cpu
+  replica 2: cpu, 43 intra-op threads, 43 cores visible, cpu
+  replica 3: cpu, 43 intra-op threads, 43 cores visible, cpu
+  replica 0: warmed batch 1..1 in 142 s
+  replica 1: warmed batch 1..1 in 141 s
+  replica 2: warmed batch 1..1 in 140 s
+  replica 3: warmed batch 1..1 in 144 s
+
+=== CALIBRATION (batch 1, sequential, per replica) ===
+  replica 0: service mean 65.837 s  text 1.685  denoise 60.738  decode 3.411  jpeg 0.003
+  replica 1: service mean 66.604 s  text 1.300  denoise 61.928  decode 3.372  jpeg 0.003
+  replica 2: service mean 66.963 s  text 1.623  denoise 61.774  decode 3.562  jpeg 0.003
+  replica 3: service mean 69.923 s  text 1.182  denoise 65.165  decode 3.573  jpeg 0.003
+  service_mean_s      : 67.332
+  service_p95_s       : 70.118
+  service_cv2         : 0.0006
+  mu_rps              : 0.0594  (3.56 req/min, batch 1, all replicas)
+  images saved to     : /home/lhe4/vit_dit_benchmark/output_SR650a_6787P_RTX6000/server_dit_output/server_dit_stabilityai_stable-diffusion-3.5-medium_bfloat16_cpu4r_20260917_070443_images
+Monitor    : host=psutil device=off cpu_power=rapl every 1000 ms
+
+=== SWEEP ===
+skipped: calibration p95 service time 70.12 s already exceeds the 30 s SLA, so no arrival rate can pass (--force-sweep to measure anyway)
+
+=== RESULT ===
+sla_seconds             : 30
+sla_percentile          : 95
+workload                : interactive
+calibrated_mu_rps       : 0.05941
+calibrated_service_s    : 67.3316
+replica_rss_gib_max     : 18.53
+max_qps                 : 0
+max_requests_per_minute : 0
+max_concurrent_users    : 0
+verdict                 : SLA unmet at every level tried
+
+=== LADDER ===
+  req/min   rho   p50 s   p95 s   p99 s  mean s  pred s  img/min attain% drop batch qmax  cores  gpu%      W  verdict
