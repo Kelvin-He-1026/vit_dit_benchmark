@@ -1,0 +1,124 @@
+Timestamp  : 20260917_152103
+Script     : server_dit_benchmark
+Model      : Efficient-Large-Model/Sana_600M_1024px_diffusers
+Dataset    : byliutao/coco2014val_10k (prompts)
+Device     : cpu
+Server     : ThinkSystem SR630 V4
+CPU        : Intel(R) Xeon(R) 6740P
+CPU cores  : 96 logical, 96 physical, 2 sockets
+GPU        : NVIDIA L4 x2
+Dtype      : bfloat16
+Quant      : disabled
+Resolution : 1024x1024
+Steps      : 20
+Seed       : 42
+Replicas   : 2
+Devices    : cpu
+CPU bind   : 0-95
+Threads    : 48
+Workload   : interactive
+Think time : 30 s
+SLA        : p95 end-to-end <= 30 s
+Batch size : 1 (max)
+Batch wait : 0 ms
+Drop after : 2x SLA queued (60 s)
+Requests   : 30 scored + 10 warmup per level
+Calibrate  : 5 generations per replica
+Early stop : enabled
+Compile    : enabled (torch.compile on the transformer submodule)
+  replica 0: cpu, 48 intra-op threads, 48 cores visible, cpu
+  replica 1: cpu, 48 intra-op threads, 48 cores visible, cpu
+  replica 0: warmed batch 1..1 in 24 s
+  replica 1: warmed batch 1..1 in 24 s
+
+=== CALIBRATION (batch 1, sequential, per replica) ===
+  replica 0: service mean 8.347 s  text 1.020  denoise 3.823  decode 3.500  jpeg 0.004
+  replica 1: service mean 8.041 s  text 0.983  denoise 3.780  decode 3.275  jpeg 0.003
+  service_mean_s      : 8.194
+  service_p95_s       : 8.541
+  service_cv2         : 0.0006
+  mu_rps              : 0.2441  (14.64 req/min, batch 1, all replicas)
+  images saved to     : /home/lhe4/vit_dit_first_cut/output_SR630_6740_L4/server_dit_output/server_dit_Efficient-Large-Model_Sana_600M_1024px_diffusers_bfloat16_cpu2r_20260917_152103_images
+Monitor    : host=psutil device=off cpu_power=rapl every 1000 ms
+
+=== SWEEP ===
+->    7.322 req/min  rho= 0.50  40 arrivals, ~5 min unless stopped early
+   p50=   8.28  p95=  17.41  p99=  18.81 s  ok=30/30  drop=0  batch=1.00  thr=7.15 img/min  PASS  ok
+->   10.251 req/min  rho= 0.70  40 arrivals, ~4 min unless stopped early
+   p50=  12.33  p95=  23.20  p99=  24.95 s  ok=30/30  drop=0  batch=1.00  thr=9.88 img/min  PASS  ok
+->   12.448 req/min  rho= 0.85  40 arrivals, ~3 min unless stopped early
+   p50=  20.80  p95=  27.09  p99=  29.59 s  ok=30/30  drop=0  batch=1.00  thr=11.87 img/min  PASS  ok
+->   14.645 req/min  rho= 1.00  40 arrivals, ~3 min unless stopped early
+   p50=  31.01  p95=  35.29  p99=  36.02 s  ok=10/30  drop=0  batch=1.00  thr=10.51 img/min  FAIL  stopped early: 5 scored misses already put p95 over the SLA
+->   13.502 req/min  rho= 0.92  40 arrivals, ~3 min unless stopped early
+   p50=  27.89  p95=  31.60  p99=  32.23 s  ok=12/30  drop=0  batch=1.00  thr=11.20 img/min  FAIL  stopped early: 3 scored misses already put p95 over the SLA
+->   12.964 req/min  rho= 0.89  40 arrivals, ~3 min unless stopped early
+   p50=  22.66  p95=  28.10  p99=  30.08 s  ok=30/30  drop=0  batch=1.00  thr=12.34 img/min  PASS  ok
+
+=== RESULT ===
+sla_seconds             : 30
+sla_percentile          : 95
+workload                : interactive
+calibrated_mu_rps       : 0.24408
+calibrated_service_s    : 8.1940
+replica_rss_gib_max     : 8.52
+max_qps                 : 0.21607
+max_requests_per_minute : 12.964
+max_images_per_hour     : 777.9
+rho_at_capacity         : 0.885
+max_concurrent_inflight : 4.45
+think_time_s            : 30
+max_concurrent_users    : 10.9
+images_per_second       : 0.20560
+goodput_rps             : 0.19874
+sla_attainment_pct      : 96.7
+
+users by think time (Little's Law, same measurement):
+  think_time=  0.0s        :        4.5 users
+  think_time= 15.0s        :        7.7 users
+  think_time= 30.0s        :       10.9 users
+  think_time= 60.0s        :       17.4 users
+
+at the winning level:
+  requests_measured     : 30
+  dropped               : 0
+  p50_ms                : 22658.7
+  p90_ms                : 27602.2
+  p95_ms                : 28100.8
+  p99_ms                : 30078.6
+  max_ms                : 30814.7
+  avg_ms_per_image      : 20597.9
+  predicted_mean_ms     : 23043.7
+  mean_batch_size       : 1.00
+  queue_depth_max       : 6
+  p95_drift             : x0.913
+
+  where the budget goes:
+    harness_lag_ms      : 2.1
+    queue_wait_ms       : 20059.7
+    inference_ms        : 8371.6
+    ipc_ms              : 0.6
+    text_encode_ms      : 942.9
+    denoise_ms          : 3752.6
+    vae_decode_ms       : 3432.1
+    jpeg_encode_ms      : 3.4
+    (queue/inference/ipc/lag are p95; the four stages are means)
+
+  resources (146 samples over the window):
+    sys_cores_busy_mean : 78.81
+    sys_cores_busy_max  : 96.00
+    sys_cpu_pct_mean    : 82.1
+    cpu_power_w_mean    : 430.3
+    power_w_mean        : 430.3
+    power_source        : cpu RAPL package
+    images_per_second_per_w: 0.000478
+    joules_per_image    : 2092.8
+
+=== LADDER ===
+  req/min   rho   p50 s   p95 s   p99 s  mean s  pred s  img/min attain% drop batch qmax  cores  gpu%      W  verdict
+    7.322  0.50    8.28   17.41   18.81   10.38    9.56     7.15   100.0    0  1.00    4   44.7     -  355.1  PASS ok
+   10.251  0.70   12.33   23.20   24.95   13.84   12.13     9.88   100.0    0  1.00    5   62.8     -  394.9  PASS ok
+   12.448  0.85   20.80   27.09   29.59   19.48   18.87    11.87    96.7    0  1.00    6   76.1     - 2146.7  PASS ok
+   12.964  0.89   22.66   28.10   30.08   20.60   23.04    12.34    96.7    0  1.00    6   78.8     -  430.3  PASS ok
+   13.502  0.92   27.89   31.60   32.23   27.46   31.42    11.20    75.0    0  1.00    6   84.4     -  441.3  FAIL stopped early: 3 scored misses already put p95 over the SLA
+   14.645  1.00   31.01   35.29   36.02   30.29     inf    10.51    50.0    0  1.00    8   85.9     -  444.9  FAIL stopped early: 5 scored misses already put p95 over the SLA

@@ -112,6 +112,61 @@ python dit_benchmark.py --model PixArt-alpha/PixArt-Sigma-XL-2-1024-MS --samples
 
 The DiT script uses 20 denoising steps and 1024x1024 by default.
 
+### Serving capacity
+
+`server_dit_benchmark.py` finds the highest Poisson arrival rate whose p95
+end-to-end latency (queue + text encode + denoise + VAE decode + JPEG) stays
+under `--sla-s` (default 30 s), and derives concurrent users from it. It
+calibrates service time first and sweeps fractions of that capacity, so there
+is no rate to guess. One run per model x hardware configuration:
+
+```bash
+# CPU, one socket
+python server_dit_benchmark.py --model Efficient-Large-Model/Sana_600M_1024px_diffusers \
+    --device cpu --replicas 1 --cpu-cores 0-47
+# CPU, both sockets (one replica per socket, one shared queue)
+python server_dit_benchmark.py --model Efficient-Large-Model/Sana_600M_1024px_diffusers \
+    --device cpu --replicas 2 --cpu-cores 0-95
+# one host socket + one L4 (cores on the GPU's NUMA node)
+python server_dit_benchmark.py --model Efficient-Large-Model/Sana_600M_1024px_diffusers \
+    --device cuda --devices cuda:0 --cpu-cores 0-47
+```
+
+SD3.5-large is GPU-only; if it does not fit resident it falls back to model CPU
+offload and the result's `GPU placement` line says so. A CPU level at the
+default 100 scored requests takes 15-30 min, so expect 1-2 h per CPU cell.
+
+## Consolidated output
+
+`python consolidate_results_sr630.py` reads every `.txt` under the results tree
+and writes two CSVs next to them:
+
+| File | One row per | Use it for |
+| --- | --- | --- |
+| `consolidated_results_<M>.csv` | run | every run's config and headline metrics |
+| `consolidated_combined_<M>.csv` | measurement | offline throughput and serving capacity in one schema |
+
+The combined file puts both harness families in one table: each row is either
+one `(replicas, batch)` cell of an offline sweep (`vit_throughput`,
+`dit_throughput`) or one arrival rate of a serving ladder (`server_vit`,
+`server_dit`). `is_best=yes` marks the cell or level the run reported, so
+filtering on it gives one row per run and dropping the filter gives the whole
+curve. `result` is `ok`/`skipped` for a sweep cell and `PASS`/`FAIL` for a
+level, with `no-capacity` for a serving run whose sweep never started.
+
+Two columns to read carefully:
+
+- `level` is the swept variable in its own unit - req/s for `server_vit`,
+  req/min for `server_dit`, streams for a video workload. `offered_rps` and
+  `requests_per_minute` normalise it; both are blank for an offline cell,
+  which has no arrival process.
+- `avg_ms_per_image` is wall-clock time per image delivered
+  (`1000 / images_per_second`) on both kinds of row. On a serving row that is
+  not the request latency - `mean_latency_ms` is.
+
+`complete=no` in the per-run CSV marks a run whose file has no result block,
+i.e. one that was interrupted.
+
 ## Metrics
 
 ViT:

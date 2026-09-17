@@ -92,10 +92,6 @@ from transformers import AutoImageProcessor, AutoModel, AutoModelForImageClassif
 import hostinfo
 import quantize
 import resources
-import sweep
-from sweep import (ReplicaPool, as_list, fmt, joined, parse_cores,
-                   parse_precisions, power_efficiency, precision_tag,
-                   split_cores)
 
 
 def parse_args():
@@ -154,7 +150,7 @@ def parse_args():
     t.add_argument(
         "--batch-sizes",
         nargs="+",
-        default="1,2,4,8,16,32,64",
+        default="1,4,8,16,32,64",
         help="Batch sizes to sweep in --throughput mode.",
     )
     t.add_argument(
@@ -305,14 +301,119 @@ def move_inputs(inputs, device, dtype):
 MIN_WARMUP_ITERS = 10
 
 
+def fmt(value, digits=1):
+    return "-" if value is None else f"{value:.{digits}f}"
 
 
+def power_efficiency(rate, res):
+    """images/s/W, and an honest note about which watts were counted.
+
+    GPU power is NVML's board figure. CPU power is the RAPL package counter,
+    which excludes DRAM and everything else in the chassis - neither is
+    wall-socket power, and a run reporting only one of the two is not
+    comparable with a run reporting both.
+    """
+    gpu_w = res.get("gpu_power_w_mean")
+    cpu_w = res.get("cpu_power_w_mean")
+    parts, total = [], 0.0
+    if gpu_w is not None:
+        parts.append("gpu NVML board")
+        total += gpu_w
+    if cpu_w is not None:
+        parts.append("cpu RAPL package")
+        total += cpu_w
+    if not parts:
+        # No power_w_mean key at all: a 0.0 would print as a measurement and
+        # read as "this ran on no watts" in both the summary and the CSV.
+        return {"power_source": "none"}
+    return {
+        "power_w_mean": total,
+        "power_source": " + ".join(parts),
+        "images_per_second_per_w": rate / total,
+    }
 
 
+# --precisions tokens. int8 and fp8 are W8A8 recipes layered on a bfloat16
+# model, not dtypes of their own - everything they do not quantise stays
+# bfloat16, so that is what they pair with.
+PRECISIONS = {
+    "fp32": ("float32", "none"),
+    "float32": ("float32", "none"),
+    "bf16": ("bfloat16", "none"),
+    "bfloat16": ("bfloat16", "none"),
+    "int8": ("bfloat16", "int8"),
+    "fp8": ("bfloat16", "fp8"),
+}
 
 
+def as_list(value):
+    """argparse value -> list of tokens, however the user spaced it.
+
+    These flags take nargs="+", so the shell hands over one token per
+    whitespace-separated chunk, each of which may itself hold commas. Treating
+    both separators the same way means "1,2,4", "1, 2, 4" and "1 2 4" all
+    parse - the alternative being an "unrecognized arguments" error for a
+    stray space, which says nothing about what to fix.
+    """
+    if value is None:
+        return []
+    tokens = value if isinstance(value, (list, tuple)) else [value]
+    return [part for token in tokens for part in str(token).split(",")
+            if part.strip()]
 
 
+def joined(value):
+    """The same tokens as one comma-separated string, for the run header."""
+    return ",".join(as_list(value))
+
+
+def parse_precisions(spec):
+    out = []
+    for token in (t.strip().lower() for t in as_list(spec)):
+        if not token:
+            continue
+        if token not in PRECISIONS:
+            raise RuntimeError(
+                f"unknown precision {token!r}; pick from "
+                f"{sorted(set(PRECISIONS))}"
+            )
+        pair = PRECISIONS[token]
+        if pair not in out:
+            out.append(pair)
+    return out
+
+
+def precision_tag(dtype_name, quant):
+    return dtype_name if quant == "none" else f"{dtype_name}-{quant}"
+
+
+def parse_cores(spec):
+    """'0-47', '0-7,16-23' or '0-7 16-23' -> [0, 1, ... ]."""
+    cores = []
+    for part in (p.strip() for p in as_list(spec)):
+        if not part:
+            continue
+        if "-" in part:
+            lo, hi = (int(x) for x in part.split("-", 1))
+            cores.extend(range(lo, hi + 1))
+        else:
+            cores.append(int(part))
+    return cores
+
+
+def split_cores(cores, n):
+    """Contiguous, disjoint slice per replica.
+
+    Disjoint on purpose: two replicas sharing a core spend their time being
+    descheduled by each other, and contiguous because neighbouring core ids sit
+    on the same socket on both machines this repo runs on - which is the
+    difference between a bfloat16 run that scales and one that collapses (see
+    the module docstring).
+    """
+    if not cores:
+        return [None] * n
+    per = max(1, len(cores) // n)
+    return [cores[i * per:(i + 1) * per] or None for i in range(n)]
 
 
 def _diagnose(model, batches, device, iters=10):
@@ -476,6 +577,77 @@ def _replica_main(conn, cfg, pool):
     conn.send({"stopped": True})
 
 
+class ReplicaPool:
+    """The parent side of one (model, precision) combination's replicas.
+
+    Lives for the batch-size sweep of a single combination and is then torn
+    down - see the header comment on why a longer-lived process is not safe to
+    measure in.
+    """
+
+    def __init__(self, n, cfg_for, pool, log=print):
+        ctx = torch.multiprocessing.get_context("spawn")
+        self.conns, self.procs = [], []
+        for i in range(n):
+            parent_conn, child_conn = ctx.Pipe()
+            proc = ctx.Process(
+                target=_replica_main, args=(child_conn, cfg_for(i), pool),
+                daemon=True, name=f"replica{i}",
+            )
+            proc.start()
+            self.conns.append(parent_conn)
+            self.procs.append(proc)
+        self.settings = []
+        for conn in self.conns:  # each has loaded its model
+            msg = conn.recv()
+            while "warning" in msg:
+                log(f"  replica: {msg['warning']}")
+                msg = conn.recv()
+            self.settings.append(msg)
+
+    def run_cell(self, n_replicas, bs, warmup_s, measure_s):
+        """One (batch size, replica count) cell. Returns (images/s, detail)."""
+        conns = self.conns[:n_replicas]
+        for conn in conns:
+            conn.send({"bs": bs, "warmup_s": warmup_s, "measure_s": measure_s})
+        for conn in conns:  # warmed and compiled, waiting on the gun
+            conn.recv()
+
+        t_go = time.perf_counter()
+        for conn in conns:
+            conn.send({"go": True})
+        results = [conn.recv() for conn in conns]
+        t_end = time.perf_counter()
+
+        # Every replica measures its own; the mean is what describes the cell,
+        # since they ran the same shape on the same kind of device.
+        launches = [r["cpu_launch_ms"] for r in results if r.get("cpu_launch_ms")]
+        gpus = [r["gpu_ms"] for r in results if r.get("gpu_ms")]
+        images = sum(r["images"] for r in results)
+        # The slowest replica's own window, not the wall time across the
+        # handshake: every replica ran for its full measure_s, and charging the
+        # startup skew to all of them would understate the total.
+        elapsed = max(r["elapsed"] for r in results)
+        return images / elapsed, {
+            "images": images,
+            "elapsed": elapsed,
+            "t_go": t_go,
+            "t_end": t_end,
+            "cpu_launch_ms": statistics.fmean(launches) if launches else None,
+            "gpu_ms": statistics.fmean(gpus) if gpus else None,
+        }
+
+    def close(self):
+        for conn in self.conns:
+            try:
+                conn.send({"stop": True})
+            except (BrokenPipeError, OSError):
+                pass
+        for proc in self.procs:
+            proc.join(timeout=30)
+            if proc.is_alive():
+                proc.terminate()
+
 
 def build_pool(model_name, rows, n_images, log):
     """Preprocess once, outside every timer, into one CPU tensor.
@@ -523,8 +695,7 @@ def sweep_combination(args, model_name, dtype_name, quant, pool, sampler,
         }
 
     rows, best = [], None
-    workers = ReplicaPool(max_replicas, _replica_main, cfg_for, pool,
-                          log=log)
+    workers = ReplicaPool(max_replicas, cfg_for, pool, log=log)
     first = workers.settings[0] if workers.settings else {}
     detail = (f", {first['quantised']} of "
               f"{first['quantised'] + first['skipped']} Linear layers quantised"

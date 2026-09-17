@@ -24,6 +24,30 @@ resource counters are taken as reported rather than recomputed. Its columns
 (workload, sla_ms, max_qps, p95_ms, queue_wait_ms, gpu_power_w_mean, ...) are
 blank for every other script, and vice versa.
 
+server_dit_benchmark.py follows the same rule. Its calibration (service time,
+mu), capacity extras (req/min, goodput, SLA attainment, rho), stage split
+(text encode / denoise / VAE decode / JPEG / ipc), energy per image and the
+users-by-think-time table all pass through as logged. The think-time table
+becomes one users_think_<N>s column per think time found in any file.
+
+One row per run hides the curve behind each headline number, so a second file
+is written next to the main CSV:
+
+  consolidated_combined_<M>.csv  one row per MEASUREMENT: each (replicas,
+                                 batch) cell of an offline throughput sweep
+                                 (vit_throughput, dit_throughput) and each
+                                 arrival rate of a serving ladder
+                                 (server_vit, server_dit), in one shared
+                                 schema. is_best marks the cell or level the
+                                 run reported as its result, so filtering on
+                                 it gives one row per run; dropping the
+                                 filter gives the whole curve. See
+                                 POINT_FIELDS for what a column means on each
+                                 kind of row.
+
+A run whose file has no "=== RESULT ===" block was interrupted; it is still
+listed, with complete=no, and a warning is printed.
+
 Every benchmark argument is emitted as its own column so runs can be filtered
 and compared directly. Fields a given script doesn't have (e.g. resolution for
 ViT, batch_size for DiT) are left blank.
@@ -74,6 +98,13 @@ OUTPUT_ROOT = Path(os.environ.get("BENCH_OUTPUT_ROOT",
 # says which box produced it.
 MACHINE_TAG = OUTPUT_ROOT.name.removeprefix("output_").split("_")[0]
 CSV_PATH = OUTPUT_ROOT / f"consolidated_results_{MACHINE_TAG}.csv"
+POINTS_CSV_PATH = OUTPUT_ROOT / f"consolidated_combined_{MACHINE_TAG}.csv"
+# Written by earlier versions, superseded by POINTS_CSV_PATH; removed on each
+# run so a stale copy cannot be mistaken for current.
+SUPERSEDED_CSV_PATHS = (
+    OUTPUT_ROOT / f"consolidated_levels_{MACHINE_TAG}.csv",
+    OUTPUT_ROOT / f"consolidated_sweep_cells_{MACHINE_TAG}.csv",
+)
 
 # Arguments/config first, then measurements, then provenance.
 ARG_FIELDS = [
@@ -120,6 +151,18 @@ ARG_FIELDS = [
     "batch_wait_ms",
     "pre_workers",
     "processor",
+    "selftest",
+    # Offline throughput sweeps (vit_throughput, dit_throughput).
+    "precisions_swept",
+    "devices",
+    "tf32",
+    # server_dit_benchmark.py only.
+    "cpu_bind",
+    "requests_per_level",
+    "warmup_requests",
+    "calibrate_generations",
+    "drop_after_factor",
+    "early_stop",
 ]
 
 METRIC_FIELDS = [
@@ -140,26 +183,56 @@ METRIC_FIELDS = [
     "avg_ms_per_image",
     "avg_s_per_image",
     "denoising_steps_per_s",
+    # dit_throughput only: the winning cell's denoise split.
+    "denoise_s_per_image",
+    "other_s_per_image",
+    "denoise_pct",
     "top1_correct",
     "top1_accuracy",
-    # Capacity and latency, server_vit_benchmark.py only.
+    # Capacity and latency, server_vit_benchmark.py and server_dit_benchmark.py.
     "max_qps",
+    "max_requests_per_minute",
+    "max_images_per_hour",
+    "rho_at_capacity",
     "max_concurrent_users",
+    # users_think_<N>s columns are inserted here, one per think time found.
     "max_concurrent_inflight",
+    "goodput_rps",
+    "sla_attainment_pct",
+    "verdict",
+    "sweep_note",
     "requests_measured",
+    "requests_dropped",
     "p50_ms",
+    "p90_ms",
     "p95_ms",
     "p99_ms",
     "max_ms",
+    "predicted_mean_ms",
     "mean_batch_size",
     "queue_depth_max",
     "p95_drift",
+    # server_dit calibration: batch-1 service time before the sweep.
+    "calibrated_mu_rps",
+    "calibrated_service_s",
+    "service_p95_s",
+    "service_cv2",
     # Where the p95 budget goes (p95 of each stage), same source.
     "harness_lag_ms",
     "preprocess_ms",
     "queue_wait_ms",
     "inference_ms",
+    # server_dit: ipc is p95; the four pipeline stages are means.
+    "ipc_ms",
+    "text_encode_ms",
+    "denoise_ms",
+    "vae_decode_ms",
+    "jpeg_encode_ms",
     # Resource counters, same source.
+    "resource_samples",
+    "replica_rss_gib_max",
+    "gpu_peak_alloc_gib",
+    "joules_per_image",
     "cpu_logical_count",
     "cpu_cores_busy_mean",
     "sys_cores_busy_mean",
@@ -180,6 +253,7 @@ METRIC_FIELDS = [
 ]
 
 PROVENANCE_FIELDS = [
+    "complete",
     "host_source",
     "shard_images",
     "shard_compute_s",
@@ -288,15 +362,62 @@ KEY_MAP = {
     "gpu_power_w_max": "gpu_power_w_max",
     "gpu_sm_clock_mhz_mean": "gpu_sm_clock_mhz_mean",
     "gpu_temp_c_max": "gpu_temp_c_max",
+    "Self-test": "selftest",
+    # Offline throughput sweeps: header config.
+    "Precisions": "precisions_swept",
+    "Devices": "devices",
+    "TF32": "tf32",
+    # dit_throughput: result block.
+    "denoise_s_per_image": "denoise_s_per_image",
+    "other_s_per_image": "other_s_per_image",
+    "denoise_pct": "denoise_pct",
+    # server_dit_benchmark.py: header config. "Requests" holds two numbers
+    # ("100 scored + 10 warmup per level") and is split in parse_file.
+    "CPU bind": "cpu_bind",
+    "Drop after": "drop_after_factor",
+    "Requests": "requests_raw",
+    "Calibrate": "calibrate_generations",
+    "Early stop": "early_stop",
+    # server_dit_benchmark.py: calibration, sweep and result block.
+    "service_p95_s": "service_p95_s",
+    "service_cv2": "service_cv2",
+    "skipped": "sweep_note",
+    "calibrated_mu_rps": "calibrated_mu_rps",
+    "calibrated_service_s": "calibrated_service_s",
+    "replica_rss_gib_max": "replica_rss_gib_max",
+    "gpu_peak_alloc_gib": "gpu_peak_alloc_gib",
+    "max_requests_per_minute": "max_requests_per_minute",
+    "max_images_per_hour": "max_images_per_hour",
+    "rho_at_capacity": "rho_at_capacity",
+    "goodput_rps": "goodput_rps",
+    "sla_attainment_pct": "sla_attainment_pct",
+    "verdict": "verdict",
+    "dropped": "requests_dropped",
+    "p90_ms": "p90_ms",
+    "predicted_mean_ms": "predicted_mean_ms",
+    "ipc_ms": "ipc_ms",
+    "text_encode_ms": "text_encode_ms",
+    "denoise_ms": "denoise_ms",
+    "vae_decode_ms": "vae_decode_ms",
+    "jpeg_encode_ms": "jpeg_encode_ms",
+    "joules_per_image": "joules_per_image",
 }
 
 # Values logged with a unit or qualifier attached, which the CSV wants as a
 # bare number: "32 (max)" -> 32, "5 s per level" -> 5, "x1.135" -> 1.135.
 # Only these fields are touched; free-text columns keep their exact text.
+# A swept value ("sweep 1,2,4") is left as text: its first number is not the
+# run's batch size, and best_batch_size says which one won.
 NUMERIC_FIELDS = {
     "batch_size", "warmup", "measure_s", "think_time_s", "batch_wait_ms",
-    "pre_workers", "sla_ms", "p95_drift",
+    "pre_workers", "sla_ms", "p95_drift", "drop_after_factor",
+    "calibrate_generations",
 }
+REQUESTS_RE = re.compile(r"(\d+)\s+scored\s*\+\s*(\d+)\s+warmup")
+# "think_time= 15.0s" (users-by-think-time table) -> users_think_15s
+THINK_KEY_RE = re.compile(r"^think_time=\s*([\d.]+)s$")
+# "resources (483 samples over the window)" -> 483
+RESOURCES_KEY_RE = re.compile(r"^resources \((\d+) samples")
 NUMBER_RE = re.compile(r"[-+]?\d*\.?\d+")
 
 PROGRESS_RE = re.compile(r"^\[\d+/\d+\]")
@@ -386,7 +507,7 @@ LABEL_KEYS = ("server", "cpu", "gpu")
 # is a "Threads" count a statement about the host: run_multisocket.py gives
 # each shard a slice of the cores, so a sharded run's thread count says how
 # the run was carved up, not what it was carved out of.
-UNSHARDED_SCRIPTS = ("server_vit_benchmark", "diag_vit_inference")
+UNSHARDED_SCRIPTS = ("server_vit_benchmark", "server_dit_benchmark", "diag_vit_inference")
 
 
 def match_known_host(rec):
@@ -461,16 +582,28 @@ PASSTHROUGH_METRICS = (
     "measured_s", "cpu_launch_ms", "gpu_ms", "bound_by", "sys_cores_busy_mean", "sys_cores_busy_max",
     "cpu_power_w_mean", "power_w_mean", "power_source",
     "images_per_second_per_w",
+    # dit_throughput's winning cell.
+    "denoise_s_per_image", "other_s_per_image", "denoise_pct",
+    # server_dit_benchmark.py, which does not shard either.
+    "max_requests_per_minute", "max_images_per_hour", "rho_at_capacity",
+    "goodput_rps", "sla_attainment_pct", "verdict", "sweep_note",
+    "requests_dropped", "p90_ms", "predicted_mean_ms",
+    "calibrated_mu_rps", "calibrated_service_s", "service_p95_s", "service_cv2",
+    "ipc_ms", "text_encode_ms", "denoise_ms", "vae_decode_ms", "jpeg_encode_ms",
+    "resource_samples", "replica_rss_gib_max", "gpu_peak_alloc_gib",
+    "joules_per_image",
 )
 
 
 def script_name(filename):
     for prefix, name in (
         ("server_vit_", "server_vit_benchmark"),
+        ("server_dit_", "server_dit_benchmark"),
         ("vllm_sla_", "vllm_sla_sweep"),
         ("vllm_benchmark_", "vllm_dit_vit_benchmark"),
         ("dit_benchmark_cpuOffload_", "dit_benchmark_cpuOffload"),
         ("dit_benchmark_", "dit_benchmark"),
+        ("dit_throughput_", "dit_throughput"),
         ("diag_vit_", "diag_vit_inference"),
         ("vit_benchmark_", "vit_benchmark"),
         ("vit_throughput_", "vit_throughput"),
@@ -481,22 +614,44 @@ def script_name(filename):
 
 
 def parse_file(path):
-    rec = {"file": path.name, "script": script_name(path.name)}
+    rec = {"file": path.name, "script": script_name(path.name), "path": path}
+    # diag_vit_inference is a diagnostic with no result block by design.
+    has_result = rec["script"] == "diag_vit_inference"
     for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
+        if line == "=== RESULT ===":
+            has_result = True
         if not line or line.startswith("===") or PROGRESS_RE.match(line):
             continue
         if ":" not in line:
             continue
         key, value = line.split(":", 1)
-        field = KEY_MAP.get(key.strip())
+        key, value = key.strip(), value.strip()
+        m = THINK_KEY_RE.match(key)
+        if m:
+            num = NUMBER_RE.search(value)
+            if num:
+                rec[f"users_think_{float(m.group(1)):g}s"] = num.group(0)
+            continue
+        m = RESOURCES_KEY_RE.match(key)
+        if m:
+            rec["resource_samples"] = m.group(1)
+            continue
+        field = KEY_MAP.get(key)
         if field:
-            rec[field] = value.strip()
+            rec[field] = value
+    rec["complete"] = "yes" if has_result else "no"
 
     for field in NUMERIC_FIELDS & rec.keys():
+        if rec[field].startswith("sweep"):
+            continue
         m = NUMBER_RE.search(rec[field])
         if m:
             rec[field] = m.group(0)
+
+    m = REQUESTS_RE.search(rec.pop("requests_raw", ""))
+    if m:
+        rec["requests_per_level"], rec["warmup_requests"] = m.group(1), m.group(2)
 
     # Only the vLLM script logs a Runtime line; everything else is diffusers.
     # Stated explicitly so the two runtimes can be compared in one query.
@@ -574,7 +729,7 @@ def fnum(rec, field):
         return None
 
 
-def pool(shards):
+def pool(shards, fields):
     shards = sorted(shards, key=lambda r: r["shard_index"])
     first = shards[0]
     row = {f: first.get(f, "") for f in ARG_FIELDS}
@@ -583,6 +738,11 @@ def pool(shards):
     for f in PASSTHROUGH_METRICS:
         if first.get(f):
             row[f] = first[f]
+    for f in first:
+        if f.startswith("users_think_"):
+            row[f] = first[f]
+    row["complete"] = ("yes" if all(s["complete"] == "yes" for s in shards)
+                       else "no")
 
     images = [int(s["images"]) for s in shards if s.get("images", "").isdigit()]
     total_images = sum(images)
@@ -609,7 +769,8 @@ def pool(shards):
     # Note its avg_ms_per_image is mean end-to-end latency per request, not
     # 1000/throughput: under batching a request waits while others are served,
     # so latency and inverse throughput are different numbers there.
-    for f in ("images_per_second", "avg_ms_per_image", "avg_s_per_image"):
+    for f in ("images_per_second", "avg_ms_per_image", "avg_s_per_image",
+              "denoising_steps_per_s"):
         if not row.get(f) and first.get(f):
             row[f] = first[f]
     if not row.get("avg_s_per_image") and fnum(row, "avg_ms_per_image") is not None:
@@ -632,23 +793,339 @@ def pool(shards):
     )
     row["files"] = "|".join(s["file"] for s in shards)
 
-    return {f: row.get(f, "") for f in FIELDS}
+    return {f: row.get(f, "") for f in fields}
+
+
+# ---------------------------------------------------------------------------
+# Measurement points: offline sweep cells and serving load levels in one table
+#
+# The main CSV keeps one row per run, which hides the curve behind each
+# headline number. This table goes the other way: one row per measurement the
+# run actually made - one (replicas, batch) cell of an offline sweep, or one
+# arrival rate of a serving ladder - with is_best marking the one the run
+# reported as its result.
+#
+# Both kinds share a schema, so a model's offline ceiling and its served
+# capacity sit in the same columns and can be compared with one filter.
+# Columns that only one kind has (denoise_pct, cpu_launch_ms for offline;
+# percentiles, rho, queue_depth_max for serving) are blank in the other.
+#
+# Two definitions worth knowing:
+#   level             the swept variable in its own unit: req/s for
+#                     server_vit, req/min for server_dit, streams for a video
+#                     workload. offered_rps and requests_per_minute normalise
+#                     it; both are blank for an offline cell, which has no
+#                     arrival process.
+#   avg_ms_per_image  wall-clock time per image delivered (1000 /
+#                     images_per_second), the same meaning on both kinds.
+#                     For a serving row that is NOT the request latency -
+#                     mean_latency_ms is.
+# ---------------------------------------------------------------------------
+
+POINT_FIELDS = [
+    "script", "timestamp", "server", "cpu", "gpu", "model", "device", "dtype",
+    "quant", "precision", "workload", "sla_seconds", "think_time_s", "level",
+    "is_best", "result", "note", "replicas", "batch_size", "offered_rps",
+    "requests_per_minute", "rho", "requests_measured", "images_per_second",
+    "images_per_minute", "avg_ms_per_image", "avg_s_per_image",
+    "denoising_steps_per_s", "denoise_pct", "cpu_launch_ms", "gpu_ms",
+    "p50_ms", "p95_ms", "p99_ms", "mean_latency_ms", "predicted_mean_ms",
+    "sla_attainment_pct", "dropped", "mean_batch_size", "queue_depth_max",
+    "cpu_cores_busy_mean", "gpu_util_pct_mean", "gpu_power_w_mean",
+    "cpu_power_w_mean", "power_w_mean", "images_per_second_per_w", "file",
+]
+
+SERVING_SCRIPTS = ("server_vit_benchmark", "server_dit_benchmark")
+THROUGHPUT_SCRIPTS = ("vit_throughput", "dit_throughput")
+
+# Sweep-table header token -> POINT_FIELDS column.
+CELL_HEADER_MAP = {
+    "replicas": "replicas", "batch": "batch_size",
+    "img/s": "images_per_second", "ms/img": "avg_ms_per_image",
+    "s/img": "avg_s_per_image", "steps/s": "denoising_steps_per_s",
+    "denoise%": "denoise_pct", "launch": "cpu_launch_ms", "gpu_ms": "gpu_ms",
+    "gpu%": "gpu_util_pct_mean", "gpuW": "gpu_power_w_mean",
+    "cores": "cpu_cores_busy_mean", "cpuW": "cpu_power_w_mean",
+    "img/s/W": "images_per_second_per_w",
+}
+
+# server_vit's SWEEP lines carry more than its LADDER summary does. Runs
+# predating the resource monitor have no cpu=/gpu= fields, so both are
+# optional rather than a second regex.
+VIT_LEVEL_RE = re.compile(
+    r"^\[\s*(?P<level>[\d.]+)\s+(?P<unit>req/s|streams)\]\s+n=\s*(?P<n>\d+)\s+"
+    r"p50=\s*(?P<p50>\S+)\s+p95=\s*(?P<p95>\S+)\s+p99=\s*(?P<p99>\S+)\s+ms\s+"
+    r"batch=\s*(?P<batch>\S+)\s+(?:cpu=\s*(?P<cpu>\S+)c\s+)?"
+    r"(?:gpu=\s*(?P<gpu>\S+)%\s+)?"
+    r"(?P<verdict>PASS|FAIL)\s+(?P<reason>.*)$")
+
+# server_dit LADDER columns, in order, before the verdict and reason.
+DIT_LADDER_COLS = [
+    "req/min", "rho", "p50 s", "p95 s", "p99 s", "mean s", "pred s", "img/min",
+    "attain%", "drop", "batch", "qmax", "cores", "gpu%", "W",
+]
+
+
+def section(lines, title_prefix):
+    """Lines after the first '=== <title_prefix>...' header, up to the next."""
+    out, inside = [], False
+    for line in lines:
+        if line.startswith("==="):
+            if inside:
+                break
+            inside = line.startswith(f"=== {title_prefix}")
+            continue
+        if inside:
+            out.append(line)
+    return out
+
+
+def blank_dash(value):
+    return "" if value in ("-", "nan", None) else value
+
+
+def num(value):
+    """float, or None for '', '-', 'nan' and anything unparseable."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    return None if v != v else v
+
+
+def s_to_ms(value):
+    v = num(value)
+    if v is None:
+        return blank_dash(value)
+    return "inf" if v == float("inf") else f"{v * 1000:.1f}"
+
+
+def fmt(value, digits=3):
+    return "" if value is None else f"{value:.{digits}f}"
+
+
+def point_context(rec):
+    """The run identity every measurement row repeats."""
+    dtype, quant = rec.get("dtype", ""), rec.get("quant", "")
+    precision = dtype if quant in ("", "disabled", "none") else f"{dtype}-{quant}"
+    sla_s = fnum(rec, "sla_seconds")
+    if sla_s is None and fnum(rec, "sla_ms") is not None:
+        sla_s = fnum(rec, "sla_ms") / 1000.0
+    return {
+        "script": rec["script"],
+        "timestamp": rec.get("timestamp", ""),
+        "server": rec.get("server", ""),
+        "cpu": rec.get("cpu", ""),
+        "gpu": rec.get("gpu", ""),
+        "model": rec.get("model", ""),
+        "device": rec.get("device", ""),
+        "dtype": dtype,
+        "quant": quant,
+        "precision": precision,
+        "workload": rec.get("workload", ""),
+        "sla_seconds": f"{sla_s:g}" if sla_s is not None else "",
+        "think_time_s": rec.get("think_time_s", ""),
+        "file": rec["file"],
+    }
+
+
+def derive_rates(row, steps):
+    """Fill the throughput family from whichever member the source gave."""
+    ips = num(row.get("images_per_second"))
+    if ips is None and num(row.get("avg_s_per_image")):
+        ips = 1.0 / num(row["avg_s_per_image"])
+        row["images_per_second"] = fmt(ips)
+    if ips is None and num(row.get("avg_ms_per_image")):
+        ips = 1000.0 / num(row["avg_ms_per_image"])
+        row["images_per_second"] = fmt(ips)
+    if not ips:
+        return
+    row["images_per_minute"] = fmt(ips * 60, 2)
+    if not row.get("avg_s_per_image"):
+        row["avg_s_per_image"] = fmt(1.0 / ips, 4)
+    if not row.get("avg_ms_per_image"):
+        row["avg_ms_per_image"] = fmt(1000.0 / ips, 1)
+    if not row.get("denoising_steps_per_s") and steps:
+        row["denoising_steps_per_s"] = fmt(ips * steps)
+    power = num(row.get("power_w_mean"))
+    if power is None:
+        gpu_w, cpu_w = num(row.get("gpu_power_w_mean")), num(row.get("cpu_power_w_mean"))
+        if gpu_w is not None or cpu_w is not None:
+            power = (gpu_w or 0.0) + (cpu_w or 0.0)
+            row["power_w_mean"] = fmt(power, 1)
+    if power and not row.get("images_per_second_per_w"):
+        row["images_per_second_per_w"] = fmt(ips / power, 6)
+
+
+def throughput_points(rec):
+    """One row per (replicas, batch) cell of an offline throughput sweep."""
+    lines = rec["path"].read_text(encoding="utf-8").splitlines()
+    table = [l for l in section(lines, "SWEEP") if l.strip()]
+    if not table:
+        return []
+    header = [CELL_HEADER_MAP.get(t, t) for t in table[0].split()]
+    best = (rec.get("best_replicas", ""), rec.get("best_batch_size", ""))
+    steps = fnum(rec, "steps")
+    out = []
+    for line in table[1:]:
+        parts = line.split()
+        if len(parts) < 2 or not (parts[0].isdigit() and parts[1].isdigit()):
+            continue
+        row = point_context(rec)
+        row["workload"] = "throughput"
+        if "skipped" in line:
+            row.update(replicas=parts[0], batch_size=parts[1], result="skipped",
+                       note=line.split("skipped", 1)[1].strip(" -()"))
+        else:
+            for name, value in zip(header, parts):
+                row[name] = blank_dash(value)
+            row["result"] = "ok"
+            derive_rates(row, steps)
+        row["is_best"] = "yes" if (row["replicas"], row["batch_size"]) == best else ""
+        out.append(row)
+    return out
+
+
+def serving_points(rec):
+    """One row per arrival rate of a serving ladder.
+
+    A run whose sweep never happened (calibration already over the SLA) has no
+    ladder at all; it still gets one row, so a zero-capacity cell is visible
+    here rather than only in the per-run CSV.
+    """
+    lines = rec["path"].read_text(encoding="utf-8").splitlines()
+    base = point_context(rec)
+    base.update(replicas=rec.get("replicas_raw", "") or "1",
+                batch_size=rec.get("batch_size", ""))
+    steps = fnum(rec, "steps")
+    out = []
+
+    if rec["script"] == "server_vit_benchmark":
+        best = fnum(rec, "max_qps")
+        measure_s = fnum(rec, "measure_s")
+        for line in section(lines, "SWEEP"):
+            m = VIT_LEVEL_RE.match(line.strip())
+            if not m:
+                continue
+            level = float(m["level"])
+            row = dict(base)
+            row.update(
+                level=m["level"], requests_measured=m["n"],
+                p50_ms=m["p50"], p95_ms=m["p95"], p99_ms=m["p99"],
+                mean_batch_size=m["batch"],
+                cpu_cores_busy_mean=blank_dash(m["cpu"] or ""),
+                gpu_util_pct_mean=blank_dash(m["gpu"] or ""),
+                result=m["verdict"], note=m["reason"],
+            )
+            if m["unit"] == "req/s":
+                row["offered_rps"] = m["level"]
+                row["requests_per_minute"] = fmt(level * 60, 2)
+            # Achieved throughput: the window is a fixed duration here, so it
+            # is the scored request count over that duration.
+            if measure_s:
+                row["images_per_second"] = fmt(float(m["n"]) / measure_s)
+            derive_rates(row, steps)
+            row["is_best"] = ("yes" if m["verdict"] == "PASS" and best
+                              and abs(level - best) < 0.006 else "")
+            out.append(row)
+        return out
+
+    best_rpm = fnum(rec, "max_requests_per_minute")
+    table = section(lines, "LADDER")
+    for line in table[1:]:  # first line is the column header
+        parts = line.split(None, len(DIT_LADDER_COLS) + 1)
+        if len(parts) < len(DIT_LADDER_COLS) + 1:
+            continue
+        v = dict(zip(DIT_LADDER_COLS, parts))
+        rpm = num(v["req/min"])
+        if rpm is None:
+            continue
+        row = dict(base)
+        img_min = num(v["img/min"])
+        row.update(
+            level=v["req/min"], offered_rps=fmt(rpm / 60, 5),
+            requests_per_minute=v["req/min"], rho=v["rho"],
+            requests_measured=rec.get("requests_per_level", ""),
+            images_per_second=fmt(img_min / 60) if img_min else "",
+            p50_ms=s_to_ms(v["p50 s"]), p95_ms=s_to_ms(v["p95 s"]),
+            p99_ms=s_to_ms(v["p99 s"]), mean_latency_ms=s_to_ms(v["mean s"]),
+            predicted_mean_ms=s_to_ms(v["pred s"]),
+            sla_attainment_pct=blank_dash(v["attain%"]), dropped=v["drop"],
+            mean_batch_size=blank_dash(v["batch"]), queue_depth_max=v["qmax"],
+            cpu_cores_busy_mean=blank_dash(v["cores"]),
+            gpu_util_pct_mean=blank_dash(v["gpu%"]),
+            power_w_mean=blank_dash(v["W"]),
+            result=parts[len(DIT_LADDER_COLS)],
+            note=(parts[len(DIT_LADDER_COLS) + 1]
+                  if len(parts) > len(DIT_LADDER_COLS) + 1 else ""),
+        )
+        derive_rates(row, steps)
+        row["is_best"] = ("yes" if row["result"] == "PASS" and best_rpm
+                          and abs(rpm - best_rpm) < 0.002 else "")
+        out.append(row)
+
+    if not out:
+        row = dict(base)
+        row.update(result="no-capacity",
+                   note=rec.get("sweep_note") or rec.get("verdict", ""))
+        out.append(row)
+    return out
+
+
+def measurement_points(rec):
+    """Every measurement in one file, each row carrying the full schema."""
+    if rec["script"] in THROUGHPUT_SCRIPTS:
+        rows = throughput_points(rec)
+    elif rec["script"] in SERVING_SCRIPTS:
+        rows = serving_points(rec)
+    else:
+        return []
+    return [{f: row.get(f, "") for f in POINT_FIELDS} for row in rows]
+
+
+def write_csv(path, fields, rows):
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 def main():
     paths = sorted(p for p in OUTPUT_ROOT.rglob("*.txt"))
     records = [parse_file(p) for p in paths]
-    runs = group_runs(records)
-    rows = sorted((pool(r) for r in runs), key=lambda r: (r["timestamp"], r["script"]))
 
-    with open(CSV_PATH, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=FIELDS)
-        writer.writeheader()
-        writer.writerows(rows)
+    # One column per think time any server run tabulated, in numeric order,
+    # placed right after the headline user count.
+    think = sorted({k for r in records for k in r if k.startswith("users_think_")},
+                   key=lambda k: float(k[len("users_think_"):-1]))
+    at = FIELDS.index("max_concurrent_users") + 1
+    fields = FIELDS[:at] + think + FIELDS[at:]
+
+    runs = group_runs(records)
+    rows = sorted((pool(r, fields) for r in runs),
+                  key=lambda r: (r["timestamp"], r["script"]))
+    write_csv(CSV_PATH, fields, rows)
+
+    points = [p for rec in records for p in measurement_points(rec)]
+    def point_order(p):
+        return (p["model"], p["device"], p["precision"],
+                num(p.get("replicas")) or 0.0, num(p.get("batch_size")) or 0.0,
+                p["timestamp"], num(p.get("level")) or 0.0)
+
+    points.sort(key=point_order)
+    write_csv(POINTS_CSV_PATH, POINT_FIELDS, points)
+    for stale in SUPERSEDED_CSV_PATHS:
+        if stale.exists():
+            stale.unlink()
+            print(f"Removed superseded {stale.name}")
 
     sharded = sum(1 for r in rows if str(r["num_shards"]) != "1")
     print(f"Read {len(paths)} files -> {len(rows)} runs ({sharded} sharded)")
     print(f"Wrote {CSV_PATH}")
+    serving = sum(1 for p in points if p["script"] in SERVING_SCRIPTS)
+    print(f"Wrote {POINTS_CSV_PATH} ({len(points)} measurements: "
+          f"{serving} serving levels, {len(points) - serving} sweep cells; "
+          f"{sum(1 for p in points if p['is_best'] == 'yes')} marked is_best)")
 
     by_script = defaultdict(int)
     for r in rows:
@@ -680,6 +1157,31 @@ def main():
             f"  warning: expected {r['num_shards']} shards, found "
             f"{len(r['files'].split('|'))}: {r['files']}"
         )
+    for r in rows:
+        if r["complete"] == "no":
+            print(f"  warning: no RESULT block (interrupted run?): {r['files']}")
+
+    # A serving or sweep file whose table yielded nothing means its format
+    # moved on and the parser above did not.
+    measured = {p["file"] for p in points}
+    for rec in records:
+        tabular = rec["script"] in SERVING_SCRIPTS + THROUGHPUT_SCRIPTS
+        if tabular and rec["complete"] == "yes" and rec["file"] not in measured:
+            print(f"  warning: no measurement rows parsed from {rec['file']}")
+
+    # Every run that reported a capacity should have the level it was read
+    # from; if not, the ladder and the result block disagree.
+    marked = {p["file"] for p in points if p["is_best"] == "yes"}
+    for rec in records:
+        if rec["script"] in SERVING_SCRIPTS and fnum(rec, "max_qps"):
+            what = "capacity"
+        elif rec["script"] in THROUGHPUT_SCRIPTS and rec.get("best_batch_size"):
+            what = "best cell"
+        else:
+            continue
+        if rec["file"] not in marked:
+            print(f"  warning: reported {what} not matched to any measurement "
+                  f"row in {rec['file']}")
 
 
 if __name__ == "__main__":

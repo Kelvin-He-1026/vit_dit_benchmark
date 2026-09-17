@@ -1,0 +1,60 @@
+Timestamp  : 20260917_125816
+Script     : server_dit_benchmark
+Model      : stabilityai/stable-diffusion-3.5-large
+Dataset    : byliutao/coco2014val_10k (prompts)
+Device     : cuda
+Server     : ThinkSystem SR630 V4
+CPU        : Intel(R) Xeon(R) 6740P
+CPU cores  : 96 logical, 96 physical, 2 sockets
+GPU        : NVIDIA L4 x2
+Dtype      : bfloat16
+Quant      : disabled
+Resolution : 1024x1024
+Steps      : 20
+Seed       : 42
+Replicas   : 1
+Devices    : cuda:0
+CPU bind   : 0-47
+Threads    : 48
+Workload   : interactive
+Think time : 30 s
+SLA        : p95 end-to-end <= 30 s
+Batch size : 1 (max)
+Batch wait : 0 ms
+Drop after : 2x SLA queued (60 s)
+Requests   : 100 scored + 10 warmup per level
+Calibrate  : 5 generations per replica
+Early stop : enabled
+NOTE       : stabilityai/stable-diffusion-3.5-large is gated; `hf auth login` must have access
+GPU placement: model CPU offload (resident placement ran out of memory)
+Compile    : requested but skipped (CPU offload is active)
+  replica 0: cuda:0, 48 intra-op threads, 48 cores visible, model CPU offload (resident placement ran out of memory)
+  replica 0: warmed batch 1..1 in 57 s
+
+=== CALIBRATION (batch 1, sequential, per replica) ===
+  replica 0: service mean 56.533 s  text 12.998  denoise 33.917  decode 9.615  jpeg 0.004
+  service_mean_s      : 56.533
+  service_p95_s       : 57.964
+  service_cv2         : 0.0003
+  mu_rps              : 0.0177  (1.06 req/min, batch 1, all replicas)
+  images saved to     : /home/lhe4/vit_dit_first_cut/output_SR630_6740_L4/server_dit_output/server_dit_stabilityai_stable-diffusion-3.5-large_bfloat16_cuda1r_20260917_125816_images
+Monitor    : host=psutil device=NVIDIA L4 cpu_power=rapl every 1000 ms
+
+=== SWEEP ===
+skipped: calibration p95 service time 57.96 s already exceeds the 30 s SLA, so no arrival rate can pass (--force-sweep to measure anyway)
+
+=== RESULT ===
+sla_seconds             : 30
+sla_percentile          : 95
+workload                : interactive
+calibrated_mu_rps       : 0.01769
+calibrated_service_s    : 56.5334
+replica_rss_gib_max     : 34.95
+gpu_peak_alloc_gib      : 21.66
+max_qps                 : 0
+max_requests_per_minute : 0
+max_concurrent_users    : 0
+verdict                 : SLA unmet at every level tried
+
+=== LADDER ===
+  req/min   rho   p50 s   p95 s   p99 s  mean s  pred s  img/min attain% drop batch qmax  cores  gpu%      W  verdict
