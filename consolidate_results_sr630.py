@@ -79,20 +79,12 @@ on the hardware being right.
 
 import csv
 import functools
-import os
 import re
 from collections import defaultdict
-from pathlib import Path
 
-import hostinfo
+from common import hostinfo
+from common.paths import OUTPUT_ROOT
 
-BASE_DIR = Path(__file__).resolve().parent
-# One results tree per machine, matching the benchmark scripts. Everything
-# under it is scanned recursively, so the per-script subfolders (vit_output,
-# dit_output, server_vit_output, server_dit_output, diag_output) need no
-# enumerating here - a new one is picked up as soon as it has files in it.
-OUTPUT_ROOT = Path(os.environ.get("BENCH_OUTPUT_ROOT",
-                                  BASE_DIR / "output_SR630_6740_L4"))
 # Named after the machine, taken from the results tree ("output_SR630_6740_L4"
 # -> "consolidated_results_SR630.csv"), so a CSV copied out of its folder still
 # says which box produced it.

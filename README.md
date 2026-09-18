@@ -6,8 +6,8 @@ Two separate environments are required. The vLLM benchmark pins transformers 5.x
 and huggingface_hub 1.x, which cannot coexist with the 4.x / 0.x pins the
 diffusers-based scripts need.
 
-Main harness (`vit_benchmark.py`, `dit_benchmark_cpuOffload.py`,
-`run_multisocket.py`, `consolidate_results_sr630.py`):
+Main harness (everything under `vit/`, `dit/` and `common/`, plus
+`consolidate_results_sr630.py`):
 
 ```bash
 python -m venv cv_env
@@ -30,18 +30,46 @@ Then authenticate:
 hf auth login
 ```
 
+## Layout
+
+```
+common/                      shared by both families; imports neither
+  paths.py                   repo paths, per-machine OUTPUT_ROOT, sets HF_HUB_CACHE
+  util.py                    percentile, slope, sync
+  hostinfo.py                server / CPU / GPU identification for result headers
+  quantize.py                W8A8 recipes behind --quant
+  resources.py               CPU / GPU / power sampling
+  sweep.py                   replica pool, core splitting, --precisions parsing
+vit/                         ViT / DINOv2; imports common/ only
+  vit_common.py              model list, dataset name
+  vit_benchmark.py           offline latency and --throughput sweep
+  server_vit_benchmark.py    serving capacity under a latency SLA
+  diag_vit_inference.py      where server_vit's inference time goes
+dit/                         DiT text-to-image; imports common/ only
+  dit_common.py              model list, gated/unsupported models, COCO prompts
+  dit_benchmark.py           offline latency and --throughput sweep
+  server_dit_benchmark.py    serving capacity under a latency SLA
+  run_server_dit_sweep.sh    the full server_dit matrix, resumable
+consolidate_results_sr630.py reads every result file, writes the CSVs
+```
+
+Run scripts from the repo root as modules, e.g.
+`python -m vit.vit_benchmark ...`. Running one by path
+(`python vit/vit_benchmark.py ...`) also works, from any directory. Models,
+datasets, the HF cache and results stay at the repo root, as before.
+
 ## ViT
 
 ```bash
-python vit_benchmark.py --model google/vit-base-patch16-224 --samples 200 --batch-size 8 --device cpu
-python vit_benchmark.py --model google/vit-large-patch16-224 --samples 200 --batch-size 8 --device cpu
-python vit_benchmark.py --model facebook/dinov2-giant --samples 200 --batch-size 8 --device cpu
+python -m vit.vit_benchmark --model google/vit-base-patch16-224 --samples 200 --batch-size 8 --device cpu
+python -m vit.vit_benchmark --model google/vit-large-patch16-224 --samples 200 --batch-size 8 --device cpu
+python -m vit.vit_benchmark --model facebook/dinov2-giant --samples 200 --batch-size 8 --device cpu
 ```
 
 For Xeon BF16:
 
 ```bash
-python vit_benchmark.py --model google/vit-base-patch16-224 --dtype bfloat16 --device cpu
+python -m vit.vit_benchmark --model google/vit-base-patch16-224 --dtype bfloat16 --device cpu
 ```
 
 ### 8-bit (W8A8)
@@ -54,7 +82,7 @@ bfloat16 (the int8 GEMM rejects batches under 17 rows). Same flag on
 `server_vit_benchmark.py`.
 
 ```bash
-python vit_benchmark.py --model google/vit-base-patch16-224 --device cuda \
+python -m vit.vit_benchmark --model google/vit-base-patch16-224 --device cuda \
     --dtype bfloat16 --compile --quant fp8 --samples 512 --batch-size 32
 ```
 
@@ -75,7 +103,7 @@ to go idle. It sweeps batch size against replica count and reports the best
 cell.
 
 ```bash
-python vit_benchmark.py --throughput --device cuda --devices cuda:0,cuda:1 \
+python -m vit.vit_benchmark --throughput --device cuda --devices cuda:0,cuda:1 \
     --replicas 1,2 --batch-sizes 8,16,32,64 --dtype bfloat16 --compile \
     --measure-s 10 --warmup-s 5
 ```
@@ -105,9 +133,9 @@ sudo chmod a+r /sys/class/powercap/intel-rapl:*/energy_uj
 Start small because 1024x1024 CPU generation can be slow:
 
 ```bash
-python dit_benchmark.py --model Efficient-Large-Model/Sana_600M_1024px_diffusers --samples 3 --device cpu
-python dit_benchmark.py --model Efficient-Large-Model/Sana_1600M_1024px_diffusers --samples 3 --device cpu
-python dit_benchmark.py --model PixArt-alpha/PixArt-Sigma-XL-2-1024-MS --samples 3 --device cpu
+python -m dit.dit_benchmark --model Efficient-Large-Model/Sana_600M_1024px_diffusers --samples 3 --device cpu
+python -m dit.dit_benchmark --model Efficient-Large-Model/Sana_1600M_1024px_diffusers --samples 3 --device cpu
+python -m dit.dit_benchmark --model PixArt-alpha/PixArt-Sigma-XL-2-1024-MS --samples 3 --device cpu
 ```
 
 The DiT script uses 20 denoising steps and 1024x1024 by default.
@@ -122,13 +150,13 @@ is no rate to guess. One run per model x hardware configuration:
 
 ```bash
 # CPU, one socket
-python server_dit_benchmark.py --model Efficient-Large-Model/Sana_600M_1024px_diffusers \
+python -m dit.server_dit_benchmark --model Efficient-Large-Model/Sana_600M_1024px_diffusers \
     --device cpu --replicas 1 --cpu-cores 0-47
 # CPU, both sockets (one replica per socket, one shared queue)
-python server_dit_benchmark.py --model Efficient-Large-Model/Sana_600M_1024px_diffusers \
+python -m dit.server_dit_benchmark --model Efficient-Large-Model/Sana_600M_1024px_diffusers \
     --device cpu --replicas 2 --cpu-cores 0-95
 # one host socket + one L4 (cores on the GPU's NUMA node)
-python server_dit_benchmark.py --model Efficient-Large-Model/Sana_600M_1024px_diffusers \
+python -m dit.server_dit_benchmark --model Efficient-Large-Model/Sana_600M_1024px_diffusers \
     --device cuda --devices cuda:0 --cpu-cores 0-47
 ```
 

@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""Host and device counters, shared by server_vit_benchmark.py and
-vit_benchmark.py.
+"""Host and device counters, shared by every ViT and DiT harness.
 
 Lifted out of server_vit_benchmark.py so the offline throughput sweep reports
 the same numbers, measured the same way, as the server sweep does. Two things

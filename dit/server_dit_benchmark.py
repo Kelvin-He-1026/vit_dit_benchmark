@@ -110,29 +110,27 @@ import io
 import math
 import random
 import statistics
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 
-# dit_benchmark sets HF_HUB_CACHE before diffusers is imported, and owns the
-# model list, the prompt loader and the per-machine output root.
-from dit_benchmark import (
-    GATED,
-    MODELS,
-    MODELS_DIR,
-    OUTPUT_ROOT,
-    UNSUPPORTED,
-    load_prompts,
-)
-from server_vit_benchmark import _slope, percentile
+if __package__ in (None, ""):
+    # Run as a file (python dit/server_dit_benchmark.py) rather than as a module
+    # (python -m dit.server_dit_benchmark): put the repo root on sys.path so the package
+    # imports below resolve either way.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+# First: sets HF_HUB_CACHE, which must precede every Hugging Face import.
+from common.paths import MODELS_DIR, OUTPUT_ROOT, ensure_dirs
 
 import torch
 
-import hostinfo
-import quantize
-import resources
-import sweep
+from common import hostinfo, quantize, resources, sweep
+from common.util import percentile, slope
+from dit.dit_common import GATED, MODELS, UNSUPPORTED, load_prompts
 
 OUTPUT_DIR = OUTPUT_ROOT / "server_dit_output"
 
@@ -925,9 +923,9 @@ def score_level(reqs, depth_samples, aborted, rate, args, model, sampler):
     })
 
     in_win = [(t - t_start, d) for t, d in depth_samples if t_start <= t <= t_end]
-    slope = _slope(in_win)
-    backlog_growth = slope * span
-    out["queue_depth_slope_per_s"] = slope
+    depth_slope = slope(in_win)
+    backlog_growth = depth_slope * span
+    out["queue_depth_slope_per_s"] = depth_slope
     out["queue_depth_max"] = max((d for _, d in in_win), default=0)
 
     half = args.warmup_requests + args.requests // 2
@@ -1054,8 +1052,7 @@ def main():
     if args.requests < 20:
         raise RuntimeError("--requests below 20 cannot support a p95")
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    ensure_dirs(OUTPUT_DIR)
 
     output_lines = []
 

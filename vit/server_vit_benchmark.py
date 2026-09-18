@@ -103,9 +103,9 @@ CPU RUNS
 import argparse
 import asyncio
 import io
-import os
 import random
 import statistics
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -113,38 +113,25 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-MODELS = [
-    "google/vit-base-patch16-224",
-    "google/vit-large-patch16-224",
-    "facebook/dinov2-giant",
-]
+if __package__ in (None, ""):
+    # Run as a file (python vit/server_vit_benchmark.py) rather than as a module
+    # (python -m vit.server_vit_benchmark): put the repo root on sys.path so the package
+    # imports below resolve either way.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-DATASET_NAME = "ILSVRC/imagenet-1k"
-
-BASE_DIR = Path(__file__).resolve().parent
-DATASET_DIR = BASE_DIR / "dataset"
-MODELS_DIR = BASE_DIR / "models"
-# Results are filed per machine, since several boxes feed this repo and a run
-# is only comparable if you know which one produced it. Override when running
-# elsewhere: BENCH_OUTPUT_ROOT=output_SR650a_6787P_RTXPRO6000 python server_vit_benchmark.py
-OUTPUT_ROOT = Path(os.environ.get("BENCH_OUTPUT_ROOT",
-                                  BASE_DIR / "output_SR630_6740_L4"))
-OUTPUT_DIR = OUTPUT_ROOT / "server_vit_output"
-HF_HUB_CACHE_DIR = BASE_DIR / "hf_hub_cache"
-
-# Must be set before huggingface_hub/datasets/transformers are imported: they
-# read HF_HUB_CACHE at import time to compute cache paths. Same reasoning as
-# vit_benchmark.py - keep blobs inside the project, and deliberately not
-# HF_HOME, which would also relocate the `hf auth login` token.
-os.environ.setdefault("HF_HUB_CACHE", str(HF_HUB_CACHE_DIR))
+# First: sets HF_HUB_CACHE, which must precede every Hugging Face import.
+from common.paths import DATASET_DIR, MODELS_DIR, OUTPUT_ROOT, ensure_dirs
 
 import torch
 from datasets import load_dataset
 from PIL import Image
 from transformers import AutoImageProcessor, AutoModel, AutoModelForImageClassification
 
-import hostinfo
-import quantize
+from common import hostinfo, quantize
+from common.util import percentile, slope
+from vit.vit_common import DATASET_NAME, MODELS
+
+OUTPUT_DIR = OUTPUT_ROOT / "server_vit_output"
 
 torch.set_num_threads(2)
 torch.set_num_interop_threads(1)
@@ -342,24 +329,6 @@ def parse_args():
     return p.parse_args()
 
 
-def percentile(values, p):
-    """Linear-interpolated percentile; no numpy dependency.
-
-    Matches vllm_dit_vit_benchmark.py's implementation so percentiles are
-    computed identically across the two harnesses.
-    """
-    if not values:
-        return float("nan")
-    ordered = sorted(values)
-    if len(ordered) == 1:
-        return ordered[0]
-    rank = (p / 100.0) * (len(ordered) - 1)
-    low = int(rank)
-    high = min(low + 1, len(ordered) - 1)
-    frac = rank - low
-    return ordered[low] + frac * (ordered[high] - ordered[low])
-
-
 @dataclass
 class Record:
     """One request's journey, in perf_counter seconds.
@@ -407,13 +376,13 @@ class Record:
 # ---------------------------------------------------------------------------
 # Resource monitoring
 #
-# Moved to resources.py so vit_benchmark.py's throughput sweep reports the same
+# Moved to common/resources.py so the throughput sweeps report the same
 # counters, measured the same way. psutil and pynvml are re-exported from there
 # because both are optional: either can be None, and the sampler degrades to
 # whatever is installed.
 # ---------------------------------------------------------------------------
 
-from resources import ResourceSample, ResourceSampler, psutil, pynvml  # noqa: F401
+from common.resources import ResourceSample, ResourceSampler, psutil, pynvml  # noqa: F401,E402
 
 
 class InferenceServer:
@@ -699,19 +668,6 @@ async def run_level(server, offsets, payloads, labels, sample_interval=0.05):
     return records, depth_samples, t0
 
 
-def _slope(points):
-    """Least-squares slope of y over x. Zero for degenerate input."""
-    if len(points) < 2:
-        return 0.0
-    n = len(points)
-    mx = sum(x for x, _ in points) / n
-    my = sum(y for _, y in points) / n
-    denom = sum((x - mx) ** 2 for x, _ in points)
-    if denom == 0:
-        return 0.0
-    return sum((x - mx) * (y - my) for x, y in points) / denom
-
-
 def score_level(records, depth_samples, t0, args, is_dino, sampler=None):
     """Reduce one level's records to a verdict plus the diagnostics behind it.
 
@@ -752,7 +708,7 @@ def score_level(records, depth_samples, t0, args, is_dino, sampler=None):
 
     # Steady state, checked two independent ways.
     in_win = [(t, d) for t, d in depth_samples if win_start <= t < win_end]
-    depth_slope = _slope([(t - win_start, d) for t, d in in_win])
+    depth_slope = slope([(t - win_start, d) for t, d in in_win])
     out["queue_depth_slope_per_s"] = depth_slope
     out["queue_depth_max"] = max((d for _, d in in_win), default=0)
     backlog_growth = depth_slope * args.measure_s
@@ -939,8 +895,7 @@ def main():
         buckets.append(args.max_batch_size)
         buckets = sorted(set(buckets))
 
-    for d in (DATASET_DIR, MODELS_DIR, OUTPUT_DIR, HF_HUB_CACHE_DIR):
-        d.mkdir(parents=True, exist_ok=True)
+    ensure_dirs(OUTPUT_DIR)
 
     output_lines = []
 

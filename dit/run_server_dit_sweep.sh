@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Full serving-capacity sweep for server_dit_benchmark.py.
 #
-#   nohup bash run_server_dit_sweep.sh > /dev/null 2>&1 &
+#   nohup bash dit/run_server_dit_sweep.sh > /dev/null 2>&1 &
 #   tail -f server_dit_sweep_*.log
+#
+# Runs from the repo root wherever it is launched from, so the log, the lock
+# and the results tree all land in the same place as before.
 #
 # Cells run one at a time: the GPU replica and the CPU replicas share cores
 # 0-47, so running cells in parallel would skew both results. A second launch
@@ -15,7 +18,7 @@
 # precision, device, replica count and batch size already exists. Delete that
 # file (or set FORCE=1) to rerun it.
 set -uo pipefail
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 # One sweep at a time. Two overlapping sweeps share cuda:0 and cores 0-47,
 # and every number either of them produces is then wrong. The lock is held
@@ -70,7 +73,7 @@ cell() {
   fi
   log ""
   log "=== $(date '+%F %T') start: $model $tag $device x$replicas bs$bs"
-  if $PY server_dit_benchmark.py "${COMMON[@]}" --model "$model" \
+  if $PY -m dit.server_dit_benchmark "${COMMON[@]}" --model "$model" \
        --device "$device" --replicas "$replicas" --max-batch-size "$bs" "$@" \
        2>&1 | tee -a "$LOG"; then
     log "=== $(date '+%F %T') done:  $model $tag $device x$replicas bs$bs"

@@ -35,65 +35,29 @@ Timing:
 """
 
 import argparse
-import os
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
 
-MODELS = [
-    "Efficient-Large-Model/Sana_600M_1024px_diffusers",
-    "Efficient-Large-Model/Sana_1600M_1024px_diffusers",
-    "PixArt-alpha/PixArt-Sigma-XL-2-1024-MS",
-    "stabilityai/stable-diffusion-3.5-medium",
-    "stabilityai/stable-diffusion-3.5-large",
-]
+if __package__ in (None, ""):
+    # Run as a file (python dit/dit_benchmark.py) rather than as a module
+    # (python -m dit.dit_benchmark): put the repo root on sys.path so the package
+    # imports below resolve either way.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-# Models that need something beyond `pip install -r requirements.txt` before
-# they will load. Checked up front so the failure is actionable instead of a
-# stack trace from deep inside diffusers.
-GATED = {
-    "stabilityai/stable-diffusion-3.5-medium",
-    "stabilityai/stable-diffusion-3.5-large",
-}
-
-UNSUPPORTED = {
-    "OmniGen2/OmniGen2": (
-        "OmniGen2's model_index.json declares _class_name=OmniGen2Pipeline, but that "
-        "class does not exist in any released diffusers (checked 0.39.0 and 0.40.0) "
-        "nor on diffusers main, and the model repo ships only a custom transformer "
-        "and scheduler - no pipeline. Running it requires the upstream package from "
-        "github.com/VectorSpaceLab/OmniGen2, which pins torch 2.6.0 and would "
-        "conflict with this environment (torch 2.13). Install it in a separate venv "
-        "and benchmark it there."
-    ),
-}
-
-BASE_DIR = Path(__file__).resolve().parent
-DATASET_DIR = BASE_DIR / "dataset"
-MODELS_DIR = BASE_DIR / "models"
-# Results are filed per machine, since several boxes feed this repo and a run
-# is only comparable if you know which one produced it. Override when running
-# elsewhere: BENCH_OUTPUT_ROOT=output_SR650a_6787P_RTXPRO6000 python dit_benchmark_cpuOffload.py
-OUTPUT_ROOT = Path(os.environ.get("BENCH_OUTPUT_ROOT",
-                                  BASE_DIR / "output_SR630_6740_L4"))
-OUTPUT_DIR = OUTPUT_ROOT / "dit_output"
-HF_HUB_CACHE_DIR = BASE_DIR / "hf_hub_cache"
-
-# Must be set before huggingface_hub/diffusers are imported: they read
-# HF_HUB_CACHE at import time to compute cache paths. Without this, raw
-# downloaded blobs land in ~/.cache/huggingface instead of this project, even
-# though cache_dir= is passed to from_pretrained/hf_hub_download below.
-os.environ.setdefault("HF_HUB_CACHE", str(HF_HUB_CACHE_DIR))
+# First: sets HF_HUB_CACHE, which must precede every Hugging Face import.
+from common.paths import MODELS_DIR, OUTPUT_ROOT, ensure_dirs
 
 import torch
 from diffusers import DiffusionPipeline
-from huggingface_hub import hf_hub_download
 from huggingface_hub.errors import GatedRepoError
 
-import hostinfo
-import quantize
-import resources
-import sweep
+from common import hostinfo, quantize, resources, sweep
+from common.util import sync
+from dit.dit_common import MODELS, UNSUPPORTED, load_prompts
+
+OUTPUT_DIR = OUTPUT_ROOT / "dit_output"
 
 
 def parse_args():
@@ -228,24 +192,6 @@ def parse_args():
     return p.parse_args()
 
 
-def sync(device):
-    if device == "cuda":
-        torch.cuda.synchronize()
-
-
-def load_prompts(n):
-    prompt_file = hf_hub_download(
-        repo_id="byliutao/coco2014val_10k",
-        repo_type="dataset",
-        filename="test.txt",
-        cache_dir=str(DATASET_DIR),
-    )
-    with open(prompt_file, "r", encoding="utf-8") as f:
-        prompts = [line.strip() for line in f if line.strip()]
-    return prompts[:n]
-
-
-
 # ---------------------------------------------------------------------------
 # Offline throughput sweep
 #
@@ -312,7 +258,7 @@ def _dit_replica(conn, cfg, prompts):
     # visible artefacts.
     quantised = skipped = 0
     if cfg["quant"] != "none":
-        import quantize as _quantize
+        from common import quantize as _quantize
         _quantize.apply(pipe.transformer, cfg["quant"])
         quantised, skipped = _quantize.count(pipe.transformer)
 
@@ -695,10 +641,7 @@ def main():
 
     dtype = torch.float32 if args.dtype == "float32" else torch.bfloat16
 
-    DATASET_DIR.mkdir(parents=True, exist_ok=True)
-    MODELS_DIR.mkdir(parents=True, exist_ok=True)
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    HF_HUB_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    ensure_dirs(OUTPUT_DIR)
 
     output_lines = []
 
