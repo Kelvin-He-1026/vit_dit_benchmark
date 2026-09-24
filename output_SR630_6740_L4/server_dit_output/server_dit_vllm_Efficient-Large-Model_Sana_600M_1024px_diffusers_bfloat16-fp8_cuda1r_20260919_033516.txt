@@ -1,0 +1,133 @@
+Timestamp  : 20260919_033516
+Script     : server_dit_vllm
+Backend    : vllm-omni
+Model      : Efficient-Large-Model/Sana_600M_1024px_diffusers
+Dataset    : byliutao/coco2014val_10k (prompts)
+Device     : cuda
+Server     : ThinkSystem SR630 V4
+CPU        : Intel(R) Xeon(R) 6740P
+CPU cores  : 96 logical, 96 physical, 2 sockets
+GPU        : NVIDIA L4 x2
+Dtype      : bfloat16
+Resolution : 1024x1024
+Steps      : 20
+Seed       : 42
+Runtime    : vllm-omni 0.26.0 (vllm 0.26.0)
+Quant      : fp8 (vLLM-Omni diffusion quantization, method=fp8, dynamic activations)
+Replicas   : 1
+Devices    : cuda:0
+CPU bind   : 0-47
+Threads    : 48
+Batch size : 1 (max)
+Batch wait : 0 ms
+vLLM args  : -
+Workload   : interactive
+Think time : 30 s
+SLA        : p95 end-to-end <= 30 s
+Drop after : 2x SLA queued (60 s)
+Requests   : 100 scored + 10 warmup per level
+Calibrate  : 5 generations per replica
+Early stop : enabled
+  pipeline: SanaPipeline via diffusers adapter
+  server: pid 3831655, http://127.0.0.1:55141, log /home/lhe4/vit_dit_first_cut/output_SR630_6740_L4/server_dit_output/server_dit_vllm_Efficient-Large-Model_Sana_600M_1024px_diffusers_bfloat16-fp8_cuda1r_20260919_033516_server.log
+  command: /home/lhe4/vit_dit_first_cut/vllm_env/bin/vllm-omni serve /home/lhe4/vit_dit_first_cut/models/models--Efficient-Large-Model--Sana_600M_1024px_diffusers/snapshots/28f3af7689de15f3883d5863059a2fca0aa9b829 --served-model-name Efficient-Large-Model/Sana_600M_1024px_diffusers --omni --host 127.0.0.1 --port 55141 --dtype bfloat16 --max-num-seqs 1 --diffusion-load-format diffusers --diffusion-quantization-config '{"method": "fp8", "activation_scheme": "dynamic"}'
+  server healthy after 24 s
+GPU placement: full pipeline resident on GPU
+Compile    : vLLM default (diffusers adapter: pipeline runs as diffusers ships it)
+  server: warmed concurrency 1..1 in 5 s
+
+=== CALIBRATION (batch 1, sequential, per replica) ===
+  replica 0: round trip mean 2.358 s  server 2.332 s
+  service_mean_s      : 2.358
+  service_p95_s       : 2.370
+  service_cv2         : 0.0000
+  mu_rps              : 0.4241  (25.44 req/min, batch 1, all replicas)
+  images saved to     : /home/lhe4/vit_dit_first_cut/output_SR630_6740_L4/server_dit_output/server_dit_vllm_Efficient-Large-Model_Sana_600M_1024px_diffusers_bfloat16-fp8_cuda1r_20260919_033516_images
+Monitor    : host=psutil device=NVIDIA L4 cpu_power=rapl every 1000 ms
+
+=== SWEEP ===
+->   12.722 req/min  rho= 0.50  110 arrivals, ~9 min unless stopped early
+   p50=   2.66  p95=   9.93  p99=  11.99 s  ok=100/100  drop=0  batch=-  thr=12.55 img/min  cap=25.10/min  PASS  ok
+->   17.810 req/min  rho= 0.70  110 arrivals, ~6 min unless stopped early
+   p50=   4.73  p95=  12.79  p99=  15.88 s  ok=100/100  drop=0  batch=-  thr=17.54 img/min  cap=24.99/min  PASS  ok
+->   21.627 req/min  rho= 0.85  110 arrivals, ~5 min unless stopped early
+   p50=   6.91  p95=  15.32  p99=  18.04 s  ok=100/100  drop=0  batch=-  thr=21.26 img/min  cap=24.97/min  PASS  ok
+->   25.443 req/min  rho= 1.00  110 arrivals, ~4 min unless stopped early
+   p50=  16.77  p95=  23.55  p99=  26.38 s  ok=100/100  drop=0  batch=-  thr=24.74 img/min  cap=24.86/min  FAIL  overloaded: offered 25.44/min >= measured capacity 24.86/min (rho 1.02); met the SLA only because the level ended
+->   23.457 req/min  rho= 0.92  110 arrivals, ~5 min unless stopped early
+   p50=   8.83  p95=  16.88  p99=  18.73 s  ok=100/100  drop=0  batch=-  thr=23.01 img/min  cap=25.06/min  PASS  ok
+->   24.430 req/min  rho= 0.96  110 arrivals, ~5 min unless stopped early
+   p50=  11.06  p95=  18.21  p99=  20.60 s  ok=100/100  drop=0  batch=-  thr=23.89 img/min  cap=25.17/min  FAIL  no steady state under SLA: queue would settle at mean 41.6 s at rho 0.97
+
+=== RESULT ===
+sla_seconds             : 30
+sla_percentile          : 95
+workload                : interactive
+calibrated_mu_rps       : 0.42405
+calibrated_service_s    : 2.3582
+replica_rss_gib_max     : 4.09
+gpu_peak_alloc_gib      : 9.75
+max_qps                 : 0.39095
+max_requests_per_minute : 23.457
+max_images_per_hour     : 1407.4
+rho_at_capacity         : 0.922
+service_capacity_rpm    : 25.055
+rho_measured            : 0.936
+steady_state_mean_ms    : 19972.7
+max_concurrent_inflight : 3.67
+think_time_s            : 30
+max_concurrent_users    : 15.4
+images_per_second       : 0.38348
+goodput_rps             : 0.38348
+sla_attainment_pct      : 100.0
+
+users by think time (Little's Law, same measurement):
+  think_time=  0.0s        :        3.7 users
+  think_time= 15.0s        :        9.5 users
+  think_time= 30.0s        :       15.4 users
+  think_time= 60.0s        :       27.1 users
+
+at the winning level:
+  requests_measured     : 100
+  dropped               : 0
+  p50_ms                : 8827.4
+  p90_ms                : 15902.3
+  p95_ms                : 16877.3
+  p99_ms                : 18733.8
+  max_ms                : 20186.8
+  avg_ms_per_image      : 9390.5
+  predicted_mean_ms     : 16287.2
+  mean_batch_size       : -
+  queue_depth_max       : 8
+  p95_drift             : x0.596
+
+  where the budget goes:
+    harness_lag_ms      : 2.0
+    server_time_ms      : 16855.3
+    http_overhead_ms    : 28.1
+    (p95; server_time includes queueing inside vLLM; http_overhead is round trip minus server_time)
+
+  resources (261 samples over the window):
+    sys_cores_busy_mean : 1.44
+    sys_cores_busy_max  : 2.21
+    sys_cpu_pct_mean    : 1.5
+    cpu_power_w_mean    : 261.9
+    gpu_util_pct_mean   : 52.3
+    gpu_mem_used_gib_max: 10.46
+    gpu_power_w_mean    : 62.0
+    gpu_power_w_max     : 71.2
+    gpu_sm_clock_mhz_mean: 1882
+    gpu_temp_c_max      : 65
+    power_w_mean        : 323.9
+    power_source        : gpu NVML board + cpu RAPL package
+    images_per_second_per_w: 0.001184
+    joules_per_image    : 844.6
+
+=== LADDER ===
+  req/min   rho   p50 s   p95 s   p99 s  mean s  pred s  img/min attain% drop batch qmax  cores  gpu%      W  verdict
+   12.722  0.50    2.66    9.93   11.99    4.22    3.54    12.55   100.0    0     -    5    0.8  26.2  307.0  PASS ok
+   17.810  0.70    4.73   12.79   15.88    5.92    5.11    17.54   100.0    0     -    7    1.1  39.8 1081.1  PASS ok
+   21.627  0.85    6.91   15.32   18.04    7.90    9.04    21.26   100.0    0     -    8    1.3  47.1  320.7  PASS ok
+   23.457  0.92    8.83   16.88   18.73    9.39   16.29    23.01   100.0    0     -    8    1.4  52.3  323.9  PASS ok
+   24.430  0.96   11.06   18.21   20.60   11.04   30.79    23.89   100.0    0     -    9    1.5  52.3  325.0  FAIL no steady state under SLA: queue would settle at mean 41.6 s at rho 0.97
+   25.443  1.00   16.77   23.55   26.38   15.72     inf    24.74   100.0    0     -   11    1.5  54.2 1404.8  FAIL overloaded: offered 25.44/min >= measured capacity 24.86/min (rho 1.02); met the SLA only because the level ended

@@ -29,3 +29,10 @@ einops==0.8.2
 
 pillow==12.3.0
 numpy==2.3.5
+
+# vLLM-Omni's diffusers adapter quantises through torchao (dit/server_dit_benchmark.py
+# --backend vllm --quant fp8 on Sana / PixArt); without it the server dies at
+# load. 0.17 is the release built against torch 2.11. Install with --no-deps so
+# pip does not resolve torch again:
+#   ./vllm_env/bin/pip install --no-deps torchao==0.17.0
+torchao==0.17.0

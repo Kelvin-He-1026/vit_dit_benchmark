@@ -160,6 +160,33 @@ python -m dit.server_dit_benchmark --model Efficient-Large-Model/Sana_600M_1024p
     --device cuda --devices cuda:0 --cpu-cores 0-47
 ```
 
+#### vLLM-Omni backend
+
+`--backend vllm` serves the same model through vLLM-Omni instead of diffusers
+pipelines, with the same arrival schedule, ladder and scoring, so the two are
+directly comparable. The harness stays in `cv_env` as an HTTP client and starts
+`vllm-omni serve` from `vllm_env` itself, pinned to `--cpu-cores` and the GPU in
+`--devices`, logging to a `_server.log` beside the result. Results are filed as
+`server_dit_vllm_*` (script `server_dit_vllm` in the consolidated CSVs).
+
+```bash
+python -m dit.server_dit_benchmark --backend vllm --compile \
+    --model stabilityai/stable-diffusion-3.5-medium \
+    --device cuda --devices cuda:0 --cpu-cores 0-47 --max-batch-size 2
+# the whole GPU matrix, resumable:
+BACKEND=vllm nohup bash dit/run_server_dit_sweep.sh > /dev/null 2>&1 &
+```
+
+- GPU only: vLLM-Omni has no CPU platform. One server, one GPU (`--replicas 1`).
+- SD3.5 runs vLLM-Omni's native pipeline, which batches (`--max-batch-size` maps
+  to `--max-num-seqs`). Sana and PixArt run through its diffusers adapter, which
+  is batch 1.
+- `--compile` keeps vLLM's default regional `torch.compile`; without it the
+  server runs `--enforce-eager`. `--quant fp8` is vLLM-Omni's own fp8 method.
+- No text-encode/denoise/decode split: the server reports only its own time per
+  request, which includes queueing inside it. `http_overhead_ms` is round trip
+  minus that.
+
 SD3.5-large is GPU-only; if it does not fit resident it falls back to model CPU
 offload and the result's `GPU placement` line says so. A CPU level at the
 default 100 scored requests takes 15-30 min, so expect 1-2 h per CPU cell.

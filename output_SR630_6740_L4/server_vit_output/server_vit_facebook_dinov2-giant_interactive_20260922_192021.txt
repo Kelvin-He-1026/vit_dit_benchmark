@@ -1,0 +1,51 @@
+Timestamp  : 20260922_192021
+Script     : server_vit_benchmark
+Model      : facebook/dinov2-giant
+Dataset    : ILSVRC/imagenet-1k
+Device     : cpu
+Server     : ThinkSystem SR630 V4
+CPU        : Intel(R) Xeon(R) 6740P
+CPU cores  : 96 logical, 96 physical, 2 sockets
+GPU        : NVIDIA L4 x2
+Dtype      : bfloat16
+Quant      : disabled
+Workload   : interactive
+Think time : 5 s
+SLA        : p95 end-to-end <= 100 ms
+Batch size : 32 (max)
+Batch wait : 5 ms
+Pre workers: 8
+Samples    : 256
+Warmup     : 5 s per level
+Measure    : 120 s per level
+Seed       : 42
+Compile    : enabled
+Processor  : fast
+Threads    : 2
+Self-test  : disabled
+Payloads   : 256 JPEGs, 67.4 KiB avg
+Warmed buckets: 1,2,4,8,16,32 x3
+Monitor    : host=psutil device=off every 250 ms
+
+=== SWEEP (req/s) ===
+[    8.00 req/s] n=   903  p50=163542.2  p95=279282.0  p99=289550.3 ms  batch= 31.8  cpu=  2.1c  gpu=  nan%  FAIL  p95 279282.0 ms > 100 ms
+[    4.00 req/s] n=   456  p50=56532.9  p95= 92161.9  p99= 95079.4 ms  batch= 31.5  cpu=  2.0c  gpu=  nan%  FAIL  p95 92161.9 ms > 100 ms
+[    2.00 req/s] n=   226  p50= 1687.1  p95=  4557.5  p99=  5778.8 ms  batch=  3.2  cpu=  1.7c  gpu=  nan%  FAIL  p95 4557.5 ms > 100 ms
+[    1.00 req/s] n=   121  p50=  557.5  p95=  2261.6  p99=  2624.1 ms  batch=  1.5  cpu=  1.0c  gpu=  nan%  FAIL  p95 2261.6 ms > 100 ms
+[    0.50 req/s] n=    67  p50=  488.3  p95=   964.2  p99=  1213.6 ms  batch=  1.1  cpu=  0.5c  gpu=  nan%  FAIL  p95 964.2 ms > 100 ms
+
+=== RESULT ===
+sla_ms                  : 100
+sla_seconds             : 0.1000
+sla_percentile          : 95
+workload                : interactive
+max_concurrent_users    : 0
+max_qps                 : 0
+verdict                 : SLA unmet at every level tried; this cell cannot serve a single user inside the budget
+
+=== LADDER ===
+        8.00 req/s   p95=279282.02 ms  n=   903  FAIL  p95 279282.0 ms > 100 ms
+        4.00 req/s   p95= 92161.90 ms  n=   456  FAIL  p95 92161.9 ms > 100 ms
+        2.00 req/s   p95=  4557.47 ms  n=   226  FAIL  p95 4557.5 ms > 100 ms
+        1.00 req/s   p95=  2261.60 ms  n=   121  FAIL  p95 2261.6 ms > 100 ms
+        0.50 req/s   p95=   964.20 ms  n=    67  FAIL  p95 964.2 ms > 100 ms

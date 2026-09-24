@@ -53,7 +53,7 @@ import torch
 from diffusers import DiffusionPipeline
 from huggingface_hub.errors import GatedRepoError
 
-from common import hostinfo, quantize, resources, sweep
+from common import hostinfo, hub, quantize, resources, sweep
 from common.util import sync
 from dit.dit_common import MODELS, UNSUPPORTED, load_prompts
 
@@ -235,6 +235,8 @@ def _dit_replica(conn, cfg, prompts):
     import torch as _torch
     from diffusers import DiffusionPipeline
 
+    from common import hub as _hub
+
     _torch.set_num_threads(cfg["threads"])
     try:
         if _torch.get_num_interop_threads() != 1:
@@ -245,7 +247,8 @@ def _dit_replica(conn, cfg, prompts):
     device = cfg["device"]
     dtype = _torch.float32 if cfg["dtype"] == "float32" else _torch.bfloat16
     try:
-        pipe = DiffusionPipeline.from_pretrained(
+        pipe = _hub.load_cached(
+            DiffusionPipeline.from_pretrained,
             cfg["model"], torch_dtype=dtype, cache_dir=cfg["models_dir"])
     except Exception as exc:  # noqa: BLE001 - the parent turns this into a message
         conn.send({"error": f"{type(exc).__name__}: {str(exc)[:300]}"})
@@ -701,10 +704,12 @@ def main():
     # `dtype` kwarg ("not expected by ...Pipeline and will be ignored"), which
     # loads the pipeline in its default precision and makes --dtype a no-op.
     try:
-        pipe = DiffusionPipeline.from_pretrained(
+        pipe = hub.load_cached(
+            DiffusionPipeline.from_pretrained,
             args.model,
             torch_dtype=dtype,
             cache_dir=str(MODELS_DIR),
+            log=log,
         )
     except GatedRepoError:
         raise RuntimeError(

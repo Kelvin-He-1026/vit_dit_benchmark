@@ -90,6 +90,39 @@ QUEUEING-MODEL CROSS-CHECK
   track below the knee. A large gap means either the calibration missed
   something (thermal, offload variance) or the harness is adding delay.
 
+BACKENDS
+  --backend diffusers (default) runs the pipelines described above, in this
+  process tree. --backend vllm serves the same model through vLLM-Omni
+  (`vllm-omni serve`, from vllm_env) and drives it over its OpenAI-compatible
+  /v1/images/generations endpoint. Everything that makes a number - arrival
+  schedule, ladder, scoring, early stop, output format - is shared, so the two
+  are directly comparable; only what sits behind the queue differs.
+
+  The two live in separate virtualenvs because their pins conflict (see
+  requirements-vllm.txt). This harness stays in cv_env as an HTTP client and
+  launches the server as a subprocess with vllm_env's executable, pinned to
+  --cpu-cores and to the one GPU in --devices, logging to a _server.log next
+  to the result.
+
+  What differs under vLLM, and how it is reported:
+    - GPU only. vLLM-Omni has no CPU platform, so --device cpu is refused.
+    - One server, one GPU: --replicas must be 1.
+    - The queue is the server's, not ours. Requests are sent the moment they
+      arrive; batching is vLLM's (--max-batch-size -> --max-num-seqs,
+      --batch-timeout-ms -> --request-batch-max-wait-ms). Only pipelines with
+      a native vLLM-Omni implementation batch (SD3.5 here); Sana and PixArt
+      run through its diffusers adapter, which is batch 1 by construction.
+    - A request older than --drop-after-factor x SLA is cancelled client-side,
+      which aborts it on the server. Unlike the diffusers backend it may
+      already be running; either way it is a miss.
+    - No per-stage split: the server reports only its own total per request
+      (server_time), which under load INCLUDES time queued inside its engine.
+      http_overhead is round trip minus that: HTTP, JSON and base64 of the
+      image. Service time for mu comes from sequential calibration requests.
+    - --compile keeps vLLM's default (regional torch.compile on native
+      pipelines); without it the server runs --enforce-eager. --quant fp8 is
+      vLLM-Omni's own fp8 method, not the torchao recipe; int8 is refused.
+
 POWER
   GPU power is NVML board power. CPU power is RAPL for every package on the
   box, so a one-socket run still includes the idle socket. Neither is
@@ -98,20 +131,30 @@ POWER
 
 OUTPUT
   <OUTPUT_ROOT>/server_dit_output/server_dit_<model>_<precision>_<device><N>r_<ts>.txt
+  (server_dit_vllm_... for --backend vllm)
   plus a _requests.csv with every request's stage timings, and a few
   calibration images for sanity checks (a broken fp8 run generates noise fast).
 """
 
 import argparse
 import asyncio
+import base64
 import csv
 import inspect
 import io
+import json
 import math
+import os
 import random
+import re
+import shlex
+import signal
+import socket
 import statistics
+import subprocess
 import sys
 import time
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
@@ -124,7 +167,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 # First: sets HF_HUB_CACHE, which must precede every Hugging Face import.
-from common.paths import MODELS_DIR, OUTPUT_ROOT, ensure_dirs
+from common.paths import MODELS_DIR, OUTPUT_ROOT, REPO_ROOT, ensure_dirs
 
 import torch
 
@@ -152,6 +195,12 @@ def parse_args():
         "for DiT text-to-image pipelines."
     )
     p.add_argument("--model", choices=MODELS, default=MODELS[0])
+    p.add_argument(
+        "--backend", choices=["diffusers", "vllm"], default="diffusers",
+        help="What serves the requests: diffusers pipelines in worker "
+        "processes (default), or a vLLM-Omni server. See BACKENDS in the "
+        "module docstring.",
+    )
     p.add_argument("--device", choices=["cpu", "cuda"], default="cpu")
     p.add_argument("--dtype", choices=["float32", "bfloat16"], default="bfloat16")
     p.add_argument(
@@ -231,6 +280,27 @@ def parse_args():
         "--drop-after-factor", type=float, default=2.0,
         help="Drop a queued request once it has waited this many SLAs since "
         "its arrival (default 2). It counts as a miss.",
+    )
+
+    v = p.add_argument_group("vllm backend")
+    v.add_argument(
+        "--vllm-bin", default=str(REPO_ROOT / "vllm_env" / "bin" / "vllm-omni"),
+        help="vllm-omni executable to launch (default: the repo's vllm_env).",
+    )
+    v.add_argument(
+        "--vllm-url", default=None,
+        help="Use an already-running server at this base URL instead of "
+        "launching one, e.g. http://127.0.0.1:8000. Placement, pinning and "
+        "server memory are then whatever that server was started with.",
+    )
+    v.add_argument(
+        "--vllm-startup-timeout-s", type=float, default=900.0,
+        help="How long to wait for the server to report healthy (default 900).",
+    )
+    v.add_argument(
+        "--vllm-extra-args", default="",
+        help="Extra arguments appended to `vllm-omni serve`, as one string, "
+        "e.g. \"--vae-use-tiling\". Logged in the header.",
     )
 
     m = p.add_argument_group("measurement")
@@ -316,6 +386,8 @@ def _replica(conn, cfg, _payload):
 
     import torch as _torch
     from diffusers import DiffusionPipeline
+
+    from common import hub as _hub
     from huggingface_hub.errors import GatedRepoError
 
     _torch.set_num_threads(cfg["threads"])
@@ -341,7 +413,8 @@ def _replica(conn, cfg, _payload):
         return
 
     try:
-        pipe = DiffusionPipeline.from_pretrained(
+        pipe = _hub.load_cached(
+            DiffusionPipeline.from_pretrained,
             cfg["model"], torch_dtype=dtype, cache_dir=cfg["models_dir"])
     except GatedRepoError:
         conn.send({"error": (
@@ -578,6 +651,9 @@ class Request:
     denoise_s: float = float("nan")
     decode_s: float = float("nan")
     jpeg_s: float = float("nan")
+    # vLLM backend only: the server's own total for the request, which under
+    # load includes time queued inside its engine.
+    server_s: float = float("nan")
     error: str = ""
 
     @property
@@ -605,6 +681,13 @@ class Request:
     @property
     def ipc_s(self):
         return self.round_trip_s - self.replica_s
+
+    @property
+    def http_s(self):
+        """vLLM backend: round trip minus server time (HTTP, JSON, base64)."""
+        if self.status != "ok":
+            return math.nan
+        return (self.done - self.dispatched) - self.server_s
 
 
 class Router:
@@ -733,6 +816,97 @@ class Router:
                 req.decode_s = timing["decode_s"]
                 req.jpeg_s = timing["jpeg_s"]
                 self._resolve(req, fut, "ok")
+
+
+class HttpRouter:
+    """Router-shaped front end for a vLLM-Omni server.
+
+    Same interface as Router, so run_level cannot tell them apart. The
+    difference is where the queue lives: every request is POSTed the moment
+    it arrives, and the server queues and batches. depth() is therefore an
+    estimate - requests in flight beyond what the server can run at once -
+    which is what the backlog check needs: a number that grows when the
+    server falls behind.
+    """
+
+    def __init__(self, backend, drop_after_s):
+        self.backend = backend
+        self.drop_after_s = drop_after_s
+        self.capacity = backend.max_batch
+        self.session = None
+        self.accepting = True
+        self.on_finish = None
+        self.fatal = None
+        self.in_flight = 0
+        self._tasks = set()
+
+    async def start(self):
+        import aiohttp
+        self.session = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=None),
+            connector=aiohttp.TCPConnector(limit=0))
+
+    async def stop(self):
+        if self.session is not None:
+            await self.session.close()
+
+    def depth(self):
+        return max(0, self.in_flight - self.capacity)
+
+    def open(self):
+        self.accepting = True
+
+    def close_and_cancel(self):
+        """Stop taking work and abandon everything in flight."""
+        self.accepting = False
+        for task in list(self._tasks):
+            task.cancel()
+
+    def _resolve(self, req, status, error=""):
+        req.status = status
+        req.error = error
+        req.done = time.perf_counter()
+        if self.on_finish is not None:
+            self.on_finish(req)
+
+    async def submit(self, req):
+        import aiohttp
+
+        req.dispatched = time.perf_counter()
+        if not self.accepting:
+            self._resolve(req, "cancelled")
+            return
+        remaining = req.scheduled + self.drop_after_s - req.dispatched
+        if remaining <= 0:
+            self._resolve(req, "dropped")
+            return
+        task = asyncio.current_task()
+        self._tasks.add(task)
+        self.in_flight += 1
+        try:
+            async with asyncio.timeout(remaining):
+                reply = await self.backend.generate(self.session, req.prompt, req.seed)
+        except TimeoutError:
+            # Cancelling the POST disconnects, and the server aborts the
+            # request, so a dropped request stops costing capacity.
+            self._resolve(req, "dropped")
+            return
+        except asyncio.CancelledError:
+            self._resolve(req, "cancelled")
+            return
+        except aiohttp.ClientConnectionError as exc:
+            self.fatal = f"lost the vLLM server ({type(exc).__name__}: {exc})"
+            self._resolve(req, "error", self.fatal)
+            return
+        finally:
+            self.in_flight -= 1
+            self._tasks.discard(task)
+
+        if reply.get("error"):
+            self._resolve(req, "error", reply["error"])
+            return
+        req.server_s = reply["server_s"]
+        self._resolve(req, "ok")
 
 
 def poisson_offsets(rate, n, rng):
@@ -868,6 +1042,45 @@ class ServiceModel:
         return self.s + wq
 
 
+def busy_capacity(intervals):
+    """Completions per second of busy time; busy = at least one request in system.
+
+    For one server that is its service rate whatever it is doing inside:
+    batch 1, or batching (two requests finishing together are two
+    completions in one service time). Used for the vLLM backend, where
+    per-request service time is not observable from outside.
+    """
+    intervals = sorted(intervals)
+    busy, (cur_s, cur_e) = 0.0, intervals[0]
+    for s, e in intervals[1:]:
+        if s > cur_e:
+            busy += cur_e - cur_s
+            cur_s, cur_e = s, e
+        else:
+            cur_e = max(cur_e, e)
+    busy += cur_e - cur_s
+    return len(intervals) / busy if busy > 0 else math.nan
+
+
+def measured_capacity(ok, n_replicas):
+    """(capacity req/s, mean service s per request, cv^2) measured in this level.
+
+    diffusers backend: from each batch's own service time on the replica,
+    shared by the requests in it, times the replica count. vLLM backend: from
+    busy periods (busy_capacity), one server.
+    """
+    timed = [r for r in ok if not math.isnan(r.replica_s)]
+    if timed:
+        per_req = [r.replica_s / max(1, r.batch_size) for r in timed]
+        svc = [r.replica_s for r in timed]
+        s_mean = statistics.fmean(per_req)
+        cs2 = (statistics.pvariance(svc) / statistics.fmean(svc) ** 2
+               if len(svc) > 1 else 0.0)
+        return n_replicas / s_mean, s_mean, cs2
+    mu = busy_capacity([(r.dispatched, r.done) for r in ok])
+    return mu, 1.0 / mu, 0.0
+
+
 def score_level(reqs, depth_samples, aborted, rate, args, model, sampler):
     measured = [r for r in reqs if r.measured]
     resolved = [r for r in measured if r.resolved]
@@ -919,14 +1132,43 @@ def score_level(reqs, depth_samples, aborted, rate, args, model, sampler):
         "denoise_mean_s": mean([r.denoise_s for r in ok]),
         "decode_mean_s": mean([r.decode_s for r in ok]),
         "jpeg_mean_s": mean([r.jpeg_s for r in ok]),
-        "mean_batch": statistics.fmean(r.batch_size for r in ok),
+        "server_p95_s": pct([r.server_s for r in ok], 95),
+        "http_p95_s": pct([r.http_s for r in ok], 95),
+        # Batch size is invisible from outside a vLLM server; nan, not 0.
+        "mean_batch": mean([float(r.batch_size) for r in ok if r.batch_size] or [math.nan]),
     })
 
-    in_win = [(t - t_start, d) for t, d in depth_samples if t_start <= t <= t_end]
+    # Backlog is fitted over the ARRIVAL window only. Fitting to the last
+    # completion includes the drain after arrivals stop, when the queue
+    # empties, and that tail flattens the slope of a queue that was growing
+    # the whole time the load was on.
+    t_arrivals = max(r.scheduled for r in measured if r.status != "not_sent")
+    arr_win = max(t_arrivals - t_start, 1e-9)
+    in_win = [(t - t_start, d) for t, d in depth_samples if t_start <= t <= t_arrivals]
     depth_slope = slope(in_win)
-    backlog_growth = depth_slope * span
+    backlog_growth = depth_slope * arr_win
     out["queue_depth_slope_per_s"] = depth_slope
-    out["queue_depth_max"] = max((d for _, d in in_win), default=0)
+    out["queue_depth_max"] = max((d for t, d in depth_samples if t_start <= t <= t_end),
+                                 default=0)
+
+    # Stability, measured rather than inferred from a finite window. A level
+    # is ~100 arrivals starting from an empty queue, so above capacity the
+    # backlog - and every latency - is still growing when the level ends, and
+    # the percentile can come in under the SLA only because the run stopped.
+    # Two conditions no finite window can fake:
+    #   overloaded    offered rate >= the service capacity measured during
+    #                 this level (rho >= 1: the queue grows without bound)
+    #   steady_state  the M/G/c mean latency at that capacity, i.e. where the
+    #                 queue would settle, is over the SLA. Only the mean, so a
+    #                 lenient bar: a p95 that meets the SLA needs at least this.
+    capacity, s_mean, cs2 = measured_capacity(ok, model.c)
+    out["capacity_rps"] = capacity
+    out["rho_measured"] = rate / capacity if capacity > 0 else math.inf
+    steady = ServiceModel([s_mean], model.c)
+    steady.cs2 = cs2
+    out["steady_mean_s"] = steady.mean_latency(rate)
+    overloaded = out["rho_measured"] >= 1.0
+    unsteady = out["steady_mean_s"] > sla_s
 
     half = args.warmup_requests + args.requests // 2
     first = [r.latency for r in resolved if r.index < half]
@@ -943,7 +1185,7 @@ def score_level(reqs, depth_samples, aborted, rate, args, model, sampler):
     # than a tenth of the scored requests.
     drifting = drift > 1.25 and p95b > 0.5 * sla_s
     backlogged = backlog_growth > 0.10 * args.requests
-    out["stable"] = not (drifting or backlogged)
+    out["stable"] = not (drifting or backlogged or overloaded or unsteady)
 
     met = out["sla_actual_s"] <= sla_s
     if aborted:
@@ -958,6 +1200,16 @@ def score_level(reqs, depth_samples, aborted, rate, args, model, sampler):
         out["passed"] = False
         out["reason"] = (f"p{args.sla_percentile:g} {fmt_s(out['sla_actual_s'])} "
                          f"> {sla_s:g} s")
+    elif overloaded:
+        out["passed"] = False
+        out["reason"] = (f"overloaded: offered {rate * 60:.2f}/min >= measured "
+                         f"capacity {capacity * 60:.2f}/min (rho {out['rho_measured']:.2f}); "
+                         f"met the SLA only because the level ended")
+    elif unsteady:
+        out["passed"] = False
+        out["reason"] = (f"no steady state under SLA: queue would settle at mean "
+                         f"{fmt_s(out['steady_mean_s'], 1)} s at rho "
+                         f"{out['rho_measured']:.2f}")
     elif drifting:
         out["passed"] = False
         out["reason"] = f"met SLA but not steady state (p95 drift x{drift:.2f})"
@@ -1029,6 +1281,508 @@ async def search(probe, mu, args):
 
 
 # ---------------------------------------------------------------------------
+# Backends
+#
+# Both expose the same few steps to main(): start, warm, calibrate, a router
+# for the sweep, a memory summary, close. Everything that decides a number
+# lives outside them, so swapping one for the other changes only what serves
+# the requests.
+# ---------------------------------------------------------------------------
+
+class DiffusersBackend:
+    """diffusers pipelines in worker processes, one per replica."""
+
+    runtime = "diffusers"
+    file_prefix = "server_dit"
+
+    def __init__(self, args, log):
+        self.args = args
+        self.log = log
+        self.devices = ((sweep.as_list(args.devices) or ["cuda:0"])
+                        if args.device == "cuda" else ["cpu"])
+        cores = sweep.parse_cores(args.cpu_cores) if args.cpu_cores else []
+        self.slices = sweep.split_cores(cores, args.replicas)
+        self.threads = args.threads or (
+            len(self.slices[0]) if self.slices[0]
+            else max(1, torch.get_num_threads() // args.replicas))
+        self.n_replicas = args.replicas
+        self.pool = None
+
+    def cfg_for(self, i):
+        a = self.args
+        return {
+            "model": a.model,
+            "models_dir": str(MODELS_DIR),
+            "device": self.devices[i % len(self.devices)],
+            "dtype": a.dtype,
+            "quant": a.quant,
+            "compile": a.compile,
+            "placement": a.gpu_placement,
+            "threads": self.threads,
+            "cores": self.slices[i],
+            "seed": a.seed,
+            "steps": a.steps,
+            "height": a.height,
+            "width": a.width,
+        }
+
+    def header(self):
+        a = self.args
+        devices = self.devices[:a.replicas] if a.device == "cuda" else self.devices
+        lines = [
+            f"Quant      : {quantize.describe(a.quant)}",
+            f"Replicas   : {a.replicas}",
+            f"Devices    : {','.join(devices)}",
+            f"CPU bind   : {sweep.joined(a.cpu_cores) or 'unpinned'}",
+            f"Threads    : {self.threads}",
+            f"Batch size : {a.max_batch_size} (max)",
+            f"Batch wait : {a.batch_timeout_ms:g} ms",
+        ]
+        if a.device == "cuda" and a.replicas > len(self.devices):
+            lines.append("WARNING    : more replicas than GPUs; a second DiT "
+                         "pipeline on one 24 GiB card usually runs out of memory")
+        return lines
+
+    def start(self):
+        self.pool = sweep.ReplicaPool(self.n_replicas, _replica, self.cfg_for,
+                                      None, log=self.log)
+        settings = self.pool.settings
+        first = settings[0]
+        if self.args.device == "cuda":
+            placements = sorted({s["placement"] for s in settings})
+            self.log(f"GPU placement: {' | '.join(placements)}")
+        compile_state = ("enabled (torch.compile on the transformer submodule)"
+                         if first["compiled"] else
+                         "requested but skipped (CPU offload is active)"
+                         if first["compile_skipped"] else "disabled")
+        self.log(f"Compile    : {compile_state}")
+        for i, s in enumerate(settings):
+            detail = (f", {s['quantised']} of {s['quantised'] + s['skipped']} "
+                      f"transformer Linear layers quantised" if s["quantised"] else "")
+            self.log(f"  replica {i}: {self.cfg_for(i)['device']}, {s['threads']} "
+                     f"intra-op threads, {s['cores']} cores visible, "
+                     f"{s['placement']}{detail}")
+
+    def warm(self, prompts):
+        """Run every batch shape once; returns the batch cap per replica."""
+        for conn in self.pool.conns:
+            conn.send({"warm": self.args.max_batch_size, "prompts": prompts[:8]})
+        self.max_batches = []
+        for i, conn in enumerate(self.pool.conns):
+            reply = conn.recv()
+            if reply["warmed"] < 1:
+                raise RuntimeError(f"replica {i} could not run even batch 1")
+            if reply["warmed"] < self.args.max_batch_size:
+                self.log(f"  replica {i}: batch capped at {reply['warmed']} "
+                         f"(batch {reply['warmed'] + 1} ran out of memory)")
+            self.max_batches.append(reply["warmed"])
+            self.log(f"  replica {i}: warmed batch 1..{reply['warmed']} in "
+                     f"{reply['warm_s']:.0f} s")
+
+    def calibrate(self, items_for):
+        """Sequential batch-1 generations; one timing list per replica."""
+        for i, conn in enumerate(self.pool.conns):
+            conn.send({"calibrate": items_for(i)})
+        return [conn.recv()["calibrated"] for conn in self.pool.conns]
+
+    def gpu_uuids(self):
+        return [s["gpu_uuid"] for s in self.pool.settings if s.get("gpu_uuid")]
+
+    def make_router(self, drop_after_s):
+        return Router(self.pool.conns, self.max_batches,
+                      self.args.batch_timeout_ms / 1000.0, drop_after_s)
+
+    def memory(self):
+        """(replica RSS GiB, GPU peak GiB or None), max over replicas."""
+        stats = []
+        for conn in self.pool.conns:
+            conn.send({"stats": True})
+            stats.append(conn.recv())
+        peaks = [s["gpu_peak_alloc_gib"] for s in stats if s["gpu_peak_alloc_gib"]]
+        return max(s["rss_max_gib"] for s in stats), (max(peaks) if peaks else None)
+
+    def close(self):
+        if self.pool is not None:
+            self.pool.close()
+
+
+class VllmBackend:
+    """One vLLM-Omni server on one GPU, driven over HTTP."""
+
+    runtime = "vllm-omni"
+    file_prefix = "server_dit_vllm"
+
+    def __init__(self, args, log):
+        if args.device != "cuda":
+            raise RuntimeError(
+                "--backend vllm needs --device cuda: vLLM-Omni ships CUDA, ROCm, "
+                "NPU, XPU and MUSA platforms, but no CPU one.")
+        if args.replicas != 1:
+            raise RuntimeError(
+                "--backend vllm serves one model on one GPU; use --replicas 1.")
+        if args.quant == "int8":
+            raise RuntimeError(
+                "--backend vllm supports --quant none or fp8 (vLLM-Omni's own "
+                "fp8 method); the torchao int8 recipe has no equivalent there.")
+        self.args = args
+        self.log = log
+        self.device = (sweep.as_list(args.devices) or ["cuda:0"])[0]
+        self.gpu_index = int(self.device.split(":")[1]) if ":" in self.device else 0
+        self.cores = sweep.parse_cores(args.cpu_cores) if args.cpu_cores else []
+        self.threads = args.threads or (len(self.cores) or None)
+        self.n_replicas = 1
+        self.max_batch = args.max_batch_size
+        self.native = None
+        self.offloaded = False
+        self.proc = None
+        self.url = args.vllm_url.rstrip("/") if args.vllm_url else None
+        self.server_log = None
+        self.rss_max_gib = 0.0
+        self.gpu_peak_mb = 0.0
+        # vLLM batches only what arrives inside its admission window; a 0 ms
+        # window would disable batching outright, so a batch cap above 1 gets
+        # at least 1 ms - nothing next to a multi-second generation.
+        self.batch_wait_ms = (max(args.batch_timeout_ms, 1.0)
+                              if args.max_batch_size > 1 else 0.0)
+        site = Path(args.vllm_bin).resolve().parents[1] / "lib"
+        self.versions = {}
+        for dist in ("vllm_omni", "vllm"):
+            found = sorted(site.glob(f"python*/site-packages/{dist}-*.dist-info"))
+            if found:
+                self.versions[dist] = found[-1].name[len(dist) + 1:-len(".dist-info")]
+
+    # -- server lifecycle --------------------------------------------------
+
+    def _snapshot(self):
+        """Local snapshot directory for --model.
+
+        Passed as a path rather than a repo id: vllm_env's huggingface_hub
+        rejects diffusers' partial downloads as incomplete snapshots, while a
+        path that exists is used as-is.
+        """
+        from huggingface_hub import snapshot_download
+        return snapshot_download(self.args.model, cache_dir=str(MODELS_DIR),
+                                 local_files_only=True)
+
+    def _is_native(self, model_dir):
+        """(class name, native?, native code honours quantisation?).
+
+        Native means vLLM-Omni has its own implementation of the pipeline. The
+        third answer matters because the server accepts
+        --diffusion-quantization-config for any model and logs "Building
+        quantization config: fp8" either way, while a native transformer that
+        never hands a quant_config to its layers ignores it and loads bf16
+        (SD3 in vLLM-Omni 0.26: 15.59 GiB with or without fp8). Checked by
+        whether the model package's source mentions quant_config at all.
+        """
+        with open(Path(model_dir) / "model_index.json", encoding="utf-8") as fh:
+            class_name = json.load(fh).get("_class_name", "")
+        python = Path(self.args.vllm_bin).parent / "python"
+        probe = subprocess.run(
+            [str(python), "-c",
+             "import sys, os, importlib.util\n"
+             "from vllm_omni.diffusion.registry import _DIFFUSION_MODELS\n"
+             f"entry = _DIFFUSION_MODELS.get({class_name!r})\n"
+             "if entry is None:\n"
+             "    sys.stdout.write('ADAPTER')\n"
+             "else:\n"
+             "    spec = importlib.util.find_spec('vllm_omni.diffusion.models.' + entry[0])\n"
+             "    folder = os.path.dirname(spec.origin)\n"
+             "    quant = any('quant_config' in open(os.path.join(folder, f), encoding='utf-8').read()\n"
+             "                for f in os.listdir(folder) if f.endswith('.py'))\n"
+             "    sys.stdout.write('NATIVE QUANT' if quant else 'NATIVE NOQUANT')\n"],
+            capture_output=True, text=True, timeout=300)
+        answer = probe.stdout.strip().splitlines()[-1] if probe.stdout.strip() else ""
+        if not answer:
+            raise RuntimeError(f"could not query vLLM-Omni's model registry:\n"
+                               f"{probe.stderr[-2000:]}")
+        native = answer.startswith("NATIVE")
+        # The diffusers adapter quantises through torchao, which does apply.
+        return class_name, native, (not native) or answer.endswith(" QUANT")
+
+    def _command(self, model_dir, port, offload):
+        a = self.args
+        cmd = [a.vllm_bin, "serve", str(model_dir),
+               "--served-model-name", a.model, "--omni",
+               "--host", "127.0.0.1", "--port", str(port),
+               "--dtype", a.dtype,
+               "--max-num-seqs", str(self.max_batch)]
+        if self.batch_wait_ms:
+            cmd += ["--request-batch-max-wait-ms", f"{self.batch_wait_ms:g}"]
+        if not self.native:
+            cmd += ["--diffusion-load-format", "diffusers"]
+        if not a.compile:
+            cmd += ["--enforce-eager"]
+        if a.quant == "fp8":
+            cmd += ["--diffusion-quantization-config",
+                    json.dumps({"method": "fp8", "activation_scheme": "dynamic"})]
+        if offload:
+            cmd += ["--enable-cpu-offload"]
+        cmd += shlex.split(a.vllm_extra_args)
+        return cmd
+
+    def _launch(self, model_dir, offload):
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+        cmd = self._command(model_dir, port, offload)
+        env = dict(os.environ,
+                   CUDA_DEVICE_ORDER="PCI_BUS_ID",
+                   CUDA_VISIBLE_DEVICES=str(self.gpu_index),
+                   HF_HUB_CACHE=str(MODELS_DIR),
+                   HF_HUB_OFFLINE="1")
+        if self.threads:
+            env["OMP_NUM_THREADS"] = str(self.threads)
+        cores = set(self.cores)
+        with open(self.server_log, "ab") as fh:
+            fh.write(f"\n$ {shlex.join(cmd)}\n".encode())
+            self.proc = subprocess.Popen(
+                cmd, stdout=fh, stderr=subprocess.STDOUT, env=env,
+                start_new_session=True,  # its own process group, killed as one
+                preexec_fn=(lambda: os.sched_setaffinity(0, cores)) if cores else None)
+        self.url = f"http://127.0.0.1:{port}"
+        self.log(f"  server: pid {self.proc.pid}, {self.url}, log {self.server_log}")
+        self.log(f"  command: {shlex.join(cmd)}")
+
+        deadline = time.monotonic() + self.args.vllm_startup_timeout_s
+        t0 = time.monotonic()
+        while time.monotonic() < deadline:
+            if self.proc.poll() is not None:
+                return False
+            if self._healthy():
+                self.log(f"  server healthy after {time.monotonic() - t0:.0f} s")
+                return True
+            time.sleep(2.0)
+        self._kill()
+        raise RuntimeError(f"vLLM server not healthy after "
+                           f"{self.args.vllm_startup_timeout_s:g} s; see {self.server_log}")
+
+    def _healthy(self):
+        try:
+            with urllib.request.urlopen(f"{self.url}/health", timeout=2) as r:
+                return r.status == 200
+        except OSError:
+            return False
+
+    def _launch_output(self):
+        """Everything the most recent launch wrote to the server log.
+
+        The log is appended across launches (a failed resident attempt, then
+        the offload retry), each preceded by its "$ command" line.
+        """
+        try:
+            text = Path(self.server_log).read_text(errors="replace")
+        except OSError:
+            return ""
+        return text[text.rfind("\n$ ") + 1:]
+
+    def _log_tail(self, n=25):
+        return "\n".join(self._launch_output().splitlines()[-n:])
+
+    def _kill(self):
+        if self.proc is None or self.proc.poll() is not None:
+            return
+        try:
+            os.killpg(self.proc.pid, signal.SIGTERM)
+            self.proc.wait(timeout=30)
+        except (ProcessLookupError, subprocess.TimeoutExpired):
+            try:
+                os.killpg(self.proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+    # -- main() interface ------------------------------------------------------
+
+    def header(self):
+        a = self.args
+        return [
+            f"Runtime    : vllm-omni {self.versions.get('vllm_omni', '?')} "
+            f"(vllm {self.versions.get('vllm', '?')})",
+            "Quant      : " + ("disabled" if a.quant == "none" else
+                                "fp8 (vLLM-Omni diffusion quantization, method=fp8, "
+                                "dynamic activations)"),
+            "Replicas   : 1",
+            f"Devices    : {self.device}",
+            f"CPU bind   : {sweep.joined(a.cpu_cores) or 'unpinned'}",
+            f"Threads    : {self.threads or 'default'}",
+            f"Batch size : {a.max_batch_size} (max)",
+            f"Batch wait : {self.batch_wait_ms:g} ms",
+            f"vLLM args  : {a.vllm_extra_args or '-'}",
+        ]
+
+    def start(self):
+        a = self.args
+        if self.url:
+            self.native = None
+            self.log(f"GPU placement: external server at {self.url}")
+            self.log("Compile    : external server (unknown)")
+            if not self._healthy():
+                raise RuntimeError(f"no healthy vLLM server at {self.url}")
+            return
+        model_dir = self._snapshot()
+        class_name, self.native, honours_quant = self._is_native(model_dir)
+        if a.quant != "none" and not honours_quant:
+            raise RuntimeError(
+                f"--quant {a.quant} would be silently ignored: vLLM-Omni's native "
+                f"{class_name} does not pass a quantisation config to its layers, "
+                f"so the server would run bf16 while this run was filed as "
+                f"{a.quant}. Use --quant none for this model under --backend vllm.")
+        if not self.native and self.max_batch > 1:
+            self.log(f"  {class_name} runs through vLLM-Omni's diffusers adapter, "
+                     f"which cannot batch: batch capped at 1")
+            self.max_batch = 1
+            self.batch_wait_ms = 0.0
+        self.log(f"  pipeline: {class_name} via "
+                 f"{'native vLLM-Omni implementation' if self.native else 'diffusers adapter'}")
+        self.server_log = str(OUTPUT_DIR / f"{self.run_name}_server.log")
+
+        offload = a.gpu_placement == "offload"
+        if not self._launch(model_dir, offload):
+            tail = self._log_tail()
+            # Searched over the whole launch, not the tail: the worker's OOM
+            # comes hundreds of lines before the API server's closing
+            # traceback, which only says the worker went away (EOFError).
+            oom = re.search(r"out of memory|OutOfMemoryError",
+                            self._launch_output(), re.I)
+            if oom and a.gpu_placement == "auto" and not offload:
+                self.log("  server ran out of GPU memory resident; relaunching "
+                         "with --enable-cpu-offload")
+                offload = True
+                if not self._launch(model_dir, offload):
+                    raise RuntimeError(f"vLLM server failed with CPU offload too:\n"
+                                       f"{self._log_tail()}")
+            else:
+                raise RuntimeError(f"vLLM server exited during startup:\n{tail}")
+        self.offloaded = offload
+        placement = ("CPU offload (--enable-cpu-offload, "
+                     + ("forced)" if a.gpu_placement == "offload"
+                        else "resident placement ran out of memory)")
+                     if offload else "full pipeline resident on GPU")
+        self.log(f"GPU placement: {placement}")
+        self.log("Compile    : " + (
+            "disabled (--enforce-eager)" if not a.compile else
+            "vLLM default (regional torch.compile on the transformer blocks)"
+            if self.native else
+            "vLLM default (diffusers adapter: pipeline runs as diffusers ships it)"))
+        self._sample_rss()
+
+    def _sample_rss(self):
+        """Server process tree RSS, kept as a running max across phases."""
+        if self.proc is None or resources.psutil is None:
+            return
+        try:
+            root = resources.psutil.Process(self.proc.pid)
+            procs = [root] + root.children(recursive=True)
+            rss = sum(p.memory_info().rss for p in procs if p.is_running())
+            self.rss_max_gib = max(self.rss_max_gib, rss / 2**30)
+        except resources.psutil.Error:
+            pass
+
+    async def generate(self, session, prompt, seed, save=None):
+        """One POST. Returns {"server_s", "image"?} or {"error"}."""
+        a = self.args
+        body = {"prompt": prompt, "size": f"{a.width}x{a.height}",
+                "num_inference_steps": a.steps, "seed": seed, "n": 1,
+                "output_format": "jpeg"}
+        async with session.post(f"{self.url}/v1/images/generations", json=body) as r:
+            try:
+                js = await r.json(content_type=None)
+            except ValueError:
+                return {"error": f"HTTP {r.status}: non-JSON response"}
+        if r.status != 200 or not js.get("data"):
+            detail = js.get("detail") or js.get("error") or js
+            return {"error": f"HTTP {r.status}: {str(detail)[:300]}"}
+        metrics = js.get("metrics") or {}
+        durations = metrics.get("stage_durations") or {}
+        peak = metrics.get("peak_memory_mb")
+        if peak:
+            self.gpu_peak_mb = max(self.gpu_peak_mb, float(peak))
+        server_ms = sum(v for k, v in durations.items()
+                        if isinstance(v, (int, float)) and k.endswith("_ms"))
+        if save:
+            with open(save, "wb") as fh:
+                fh.write(base64.b64decode(js["data"][0]["b64_json"]))
+        return {"server_s": server_ms / 1000.0 if durations else math.nan}
+
+    async def _session(self):
+        import aiohttp
+        return aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=None),
+                                     connector=aiohttp.TCPConnector(limit=0))
+
+    def warm(self, prompts):
+        """Every concurrency up to the batch cap, twice: vLLM compiles per
+        batch shape, and the first pair of a new shape measured at ~40 s."""
+        async def run():
+            largest, t0 = 0, time.perf_counter()
+            async with await self._session() as s:
+                for bs in range(1, self.max_batch + 1):
+                    for rep in range(2):
+                        replies = await asyncio.gather(*[
+                            self.generate(s, prompts[(bs + i) % len(prompts)],
+                                          self.args.seed + i)
+                            for i in range(bs)])
+                        bad = [r["error"] for r in replies if r.get("error")]
+                        if bad:
+                            self.log(f"  warm batch {bs} failed: {bad[0]}")
+                            return largest, time.perf_counter() - t0
+                    largest = bs
+            return largest, time.perf_counter() - t0
+
+        largest, took = asyncio.run(run())
+        if largest < 1:
+            raise RuntimeError(f"vLLM server could not serve one request; see "
+                               f"{self.server_log}")
+        if largest < self.max_batch:
+            self.log(f"  server: batch capped at {largest}")
+            self.max_batch = largest
+        self.log(f"  server: warmed concurrency 1..{largest} in {took:.0f} s")
+        self._sample_rss()
+
+    def calibrate(self, items_for):
+        async def run():
+            timings = []
+            async with await self._session() as s:
+                for it in items_for(0):
+                    t0 = time.perf_counter()
+                    reply = await self.generate(s, it["prompt"], it["seed"], it["save"])
+                    if reply.get("error"):
+                        raise RuntimeError(f"calibration request failed: {reply['error']}")
+                    nan = math.nan
+                    timings.append({
+                        "replica_s": time.perf_counter() - t0,
+                        "server_s": reply["server_s"],
+                        "text_encode_s": nan, "denoise_s": nan,
+                        "decode_s": nan, "jpeg_s": nan,
+                    })
+            return [timings]
+
+        calib = asyncio.run(run())
+        self._sample_rss()
+        return calib
+
+    def gpu_uuids(self):
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=index,uuid", "--format=csv,noheader"],
+            capture_output=True, text=True).stdout
+        for line in out.splitlines():
+            idx, _, uuid = line.partition(",")
+            if idx.strip() == str(self.gpu_index):
+                return [uuid.strip()]
+        return []
+
+    def make_router(self, drop_after_s):
+        return HttpRouter(self, drop_after_s)
+
+    def memory(self):
+        self._sample_rss()
+        return (self.rss_max_gib or None,
+                self.gpu_peak_mb / 1024.0 if self.gpu_peak_mb else None)
+
+    def close(self):
+        self._kill()
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -1041,7 +1795,8 @@ def main():
     if args.device == "cpu" and args.model in CPU_EXCLUDED:
         raise RuntimeError(f"{args.model} is not benchmarked on CPU: "
                            f"{CPU_EXCLUDED[args.model]}")
-    if args.device == "cuda" and not torch.cuda.is_available():
+    # The vLLM backend never touches CUDA from this process; the server does.
+    if args.backend == "diffusers" and args.device == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA requested but torch.cuda.is_available() is False")
     if args.compile and args.dtype != "bfloat16":
         raise RuntimeError("--compile is only supported with --dtype bfloat16")
@@ -1060,35 +1815,18 @@ def main():
         print(msg, flush=True)
         output_lines.append(msg)
 
-    devices = (sweep.as_list(args.devices) or ["cuda:0"]) if args.device == "cuda" else ["cpu"]
-    cores = sweep.parse_cores(args.cpu_cores) if args.cpu_cores else []
-    slices = sweep.split_cores(cores, args.replicas)
-    threads = args.threads or (len(slices[0]) if slices[0]
-                               else max(1, torch.get_num_threads() // args.replicas))
+    backend = (VllmBackend if args.backend == "vllm" else DiffusersBackend)(args, log)
+    is_vllm = args.backend == "vllm"
     tag = sweep.precision_tag(args.dtype, args.quant)
     slug = args.model.replace("/", "_")
-    run_name = f"server_dit_{slug}_{tag}_{args.device}{args.replicas}r_{timestamp}"
+    run_name = (f"{backend.file_prefix}_{slug}_{tag}_{args.device}"
+                f"{args.replicas}r_{timestamp}")
+    backend.run_name = run_name
     image_dir = OUTPUT_DIR / f"{run_name}_images"
 
-    def cfg_for(i):
-        return {
-            "model": args.model,
-            "models_dir": str(MODELS_DIR),
-            "device": devices[i % len(devices)],
-            "dtype": args.dtype,
-            "quant": args.quant,
-            "compile": args.compile,
-            "placement": args.gpu_placement,
-            "threads": threads,
-            "cores": slices[i],
-            "seed": args.seed,
-            "steps": args.steps,
-            "height": args.height,
-            "width": args.width,
-        }
-
     log(f"Timestamp  : {timestamp}")
-    log("Script     : server_dit_benchmark")
+    log(f"Script     : {backend.file_prefix}")
+    log(f"Backend    : {backend.runtime}")
     log(f"Model      : {args.model}")
     log("Dataset    : byliutao/coco2014val_10k (prompts)")
     log(f"Device     : {args.device}")
@@ -1099,91 +1837,59 @@ def main():
     # context in the parent and cost the replica memory on the same card.
     log(f"GPU        : {hostinfo.gpu_sku(use_torch=False)}")
     log(f"Dtype      : {args.dtype}")
-    log(f"Quant      : {quantize.describe(args.quant)}")
     log(f"Resolution : {args.width}x{args.height}")
     log(f"Steps      : {args.steps}")
     log(f"Seed       : {args.seed}")
-    log(f"Replicas   : {args.replicas}")
-    log(f"Devices    : {','.join(devices[:args.replicas] if args.device == 'cuda' else devices)}")
-    log(f"CPU bind   : {sweep.joined(args.cpu_cores) or 'unpinned'}")
-    log(f"Threads    : {threads}")
+    for line in backend.header():
+        log(line)
     log("Workload   : interactive")
     log(f"Think time : {args.think_time_s:g} s")
     log(f"SLA        : p{args.sla_percentile:g} end-to-end <= {args.sla_s:g} s")
-    log(f"Batch size : {args.max_batch_size} (max)")
-    log(f"Batch wait : {args.batch_timeout_ms:g} ms")
     log(f"Drop after : {args.drop_after_factor:g}x SLA queued "
         f"({args.drop_after_factor * args.sla_s:g} s)")
     log(f"Requests   : {args.requests} scored + {args.warmup_requests} warmup per level")
     log(f"Calibrate  : {args.calibrate} generations per replica")
     log(f"Early stop : {'disabled' if args.no_early_stop else 'enabled'}")
-    if args.device == "cuda" and args.replicas > len(devices):
-        log("WARNING    : more replicas than GPUs; a second DiT pipeline on one "
-            "24 GiB card usually runs out of memory")
-
     if args.model in GATED:
         log(f"NOTE       : {args.model} is gated; `hf auth login` must have access")
 
     prompts = load_prompts(args.prompts)
 
-    pool = sweep.ReplicaPool(args.replicas, _replica, cfg_for, None, log=log)
     sampler = None
     all_requests = []
     try:
-        placements = {s["placement"] for s in pool.settings}
-        first = pool.settings[0]
-        if args.device == "cuda":
-            log(f"GPU placement: {' | '.join(sorted(placements))}")
-        compile_state = ("enabled (torch.compile on the transformer submodule)"
-                         if first["compiled"] else
-                         "requested but skipped (CPU offload is active)"
-                         if first["compile_skipped"] else "disabled")
-        log(f"Compile    : {compile_state}")
-        for i, s in enumerate(pool.settings):
-            detail = (f", {s['quantised']} of {s['quantised'] + s['skipped']} "
-                      f"transformer Linear layers quantised" if s["quantised"] else "")
-            log(f"  replica {i}: {cfg_for(i)['device']}, {s['threads']} intra-op "
-                f"threads, {s['cores']} cores visible, {s['placement']}{detail}")
-
-        # -- warm every batch shape ----------------------------------------
-        for conn in pool.conns:
-            conn.send({"warm": args.max_batch_size, "prompts": prompts[:8]})
-        max_batches = []
-        for i, conn in enumerate(pool.conns):
-            reply = conn.recv()
-            if reply["warmed"] < 1:
-                raise RuntimeError(f"replica {i} could not run even batch 1")
-            if reply["warmed"] < args.max_batch_size:
-                log(f"  replica {i}: batch capped at {reply['warmed']} "
-                    f"(batch {reply['warmed'] + 1} ran out of memory)")
-            max_batches.append(reply["warmed"])
-            log(f"  replica {i}: warmed batch 1..{reply['warmed']} in "
-                f"{reply['warm_s']:.0f} s")
+        backend.start()
+        backend.warm(prompts)
 
         # -- calibrate service time -----------------------------------------
         if args.save_images:
             image_dir.mkdir(parents=True, exist_ok=True)
-        for i, conn in enumerate(pool.conns):
-            items = []
-            for j in range(args.calibrate):
-                save = (str(image_dir / f"calib_r{i}_{j}.jpg")
-                        if i == 0 and j < args.save_images else None)
-                items.append({"prompt": prompts[j % len(prompts)],
-                              "seed": args.seed + j, "save": save})
-            conn.send({"calibrate": items})
-        calib = [conn.recv()["calibrated"] for conn in pool.conns]
+
+        def items_for(i):
+            return [{"prompt": prompts[j % len(prompts)], "seed": args.seed + j,
+                     "save": (str(image_dir / f"calib_r{i}_{j}.jpg")
+                              if i == 0 and j < args.save_images else None)}
+                    for j in range(args.calibrate)]
+
+        calib = backend.calibrate(items_for)
         service = [t["replica_s"] for per in calib for t in per]
-        model = ServiceModel(service, args.replicas)
+        model = ServiceModel(service, backend.n_replicas)
         cal_p95 = pct(service, 95)
 
         log("")
         log("=== CALIBRATION (batch 1, sequential, per replica) ===")
         for i, per in enumerate(calib):
-            log(f"  replica {i}: service mean {mean([t['replica_s'] for t in per]):.3f} s  "
-                f"text {mean([t['text_encode_s'] for t in per]):.3f}  "
-                f"denoise {mean([t['denoise_s'] for t in per]):.3f}  "
-                f"decode {mean([t['decode_s'] for t in per]):.3f}  "
-                f"jpeg {mean([t['jpeg_s'] for t in per]):.3f}")
+            if is_vllm:
+                log(f"  replica {i}: round trip mean "
+                    f"{mean([t['replica_s'] for t in per]):.3f} s  server "
+                    f"{fmt_s(mean([t['server_s'] for t in per]), 3)} s")
+            else:
+                log(f"  replica {i}: service mean "
+                    f"{mean([t['replica_s'] for t in per]):.3f} s  "
+                    f"text {mean([t['text_encode_s'] for t in per]):.3f}  "
+                    f"denoise {mean([t['denoise_s'] for t in per]):.3f}  "
+                    f"decode {mean([t['decode_s'] for t in per]):.3f}  "
+                    f"jpeg {mean([t['jpeg_s'] for t in per]):.3f}")
         log(f"  service_mean_s      : {model.s:.3f}")
         log(f"  service_p95_s       : {cal_p95:.3f}")
         log(f"  service_cv2         : {model.cs2:.4f}")
@@ -1194,10 +1900,9 @@ def main():
 
         # -- resource monitor ------------------------------------------------
         if not args.no_resource_monitor:
-            uuids = [s["gpu_uuid"] for s in pool.settings if s.get("gpu_uuid")]
             sampler = resources.ResourceSampler(
                 args.sample_interval_ms / 1000.0,
-                gpu_uuids=list(dict.fromkeys(uuids)), log=log)
+                gpu_uuids=list(dict.fromkeys(backend.gpu_uuids())), log=log)
             log(f"Monitor    : host={'psutil' if sampler.proc else 'off'} "
                 f"device={sampler.gpu_name or 'off'} "
                 f"cpu_power={'rapl' if sampler._rapl else 'off'} "
@@ -1208,6 +1913,7 @@ def main():
         history = []
         skip_sweep = (cal_p95 > args.sla_s and not args.force_sweep
                       and not args.sweep)
+        router = backend.make_router(args.drop_after_factor * args.sla_s)
 
         async def probe(rate):
             n = args.warmup_requests + args.requests
@@ -1224,11 +1930,9 @@ def main():
                 f"ok={r['n_ok']}/{r['n_measured']}  drop={r['n_dropped']}  "
                 f"batch={fmt_s(r.get('mean_batch'))}  "
                 f"thr={fmt_s(r.get('throughput_rps', 0) * 60)} img/min  "
+                f"cap={fmt_s(r.get('capacity_rps', math.nan) * 60)}/min  "
                 f"{'PASS' if r['passed'] else 'FAIL'}  {r['reason']}")
             return r
-
-        router = Router(pool.conns, max_batches, args.batch_timeout_ms / 1000.0,
-                        args.drop_after_factor * args.sla_s)
 
         async def driver():
             await router.start()
@@ -1254,15 +1958,12 @@ def main():
         else:
             best, best_res, capped = asyncio.run(driver())
 
-        # Replica-side memory, before the pool goes away.
-        stats = []
-        for conn in pool.conns:
-            conn.send({"stats": True})
-            stats.append(conn.recv())
+        # Memory while the replicas / server still exist.
+        rss_gib, gpu_peak_gib = backend.memory()
     finally:
         if sampler is not None:
             sampler.stop()
-        pool.close()
+        backend.close()
 
     # -- result ---------------------------------------------------------------
     log("")
@@ -1272,11 +1973,10 @@ def main():
     log("workload                : interactive")
     log(f"calibrated_mu_rps       : {model.mu:.5f}")
     log(f"calibrated_service_s    : {model.s:.4f}")
-    rss = [s["rss_max_gib"] for s in stats]
-    log(f"replica_rss_gib_max     : {max(rss):.2f}")
-    gpu_peaks = [s["gpu_peak_alloc_gib"] for s in stats if s["gpu_peak_alloc_gib"]]
-    if gpu_peaks:
-        log(f"gpu_peak_alloc_gib      : {max(gpu_peaks):.2f}")
+    if rss_gib:
+        log(f"replica_rss_gib_max     : {rss_gib:.2f}")
+    if gpu_peak_gib:
+        log(f"gpu_peak_alloc_gib      : {gpu_peak_gib:.2f}")
 
     if best_res is None:
         log("max_qps                 : 0")
@@ -1290,6 +1990,11 @@ def main():
         log(f"max_requests_per_minute : {qps * 60:.3f}")
         log(f"max_images_per_hour     : {qps * 3600:.1f}")
         log(f"rho_at_capacity         : {qps / model.mu:.3f}")
+        # Measured in the winning level itself, and what stability is judged
+        # against; rho_at_capacity above is against the calibration.
+        log(f"service_capacity_rpm    : {best_res['capacity_rps'] * 60:.3f}")
+        log(f"rho_measured            : {best_res['rho_measured']:.3f}")
+        log(f"steady_state_mean_ms    : {1000 * best_res['steady_mean_s']:.1f}")
         log(f"max_concurrent_inflight : {qps * mean_s:.2f}")
         log(f"think_time_s            : {args.think_time_s:g}")
         log(f"max_concurrent_users    : {qps * (args.think_time_s + mean_s):.1f}")
@@ -1316,20 +2021,28 @@ def main():
         log(f"  predicted_mean_ms     : {1000 * best_res['predicted_mean_s']:.1f}"
             if not math.isnan(best_res["predicted_mean_s"]) else
             "  predicted_mean_ms     : -")
-        log(f"  mean_batch_size       : {best_res['mean_batch']:.2f}")
+        log(f"  mean_batch_size       : {fmt_s(best_res['mean_batch'])}")
         log(f"  queue_depth_max       : {best_res['queue_depth_max']}")
         log(f"  p95_drift             : x{best_res['p95_drift']:.3f}")
         log("")
         log("  where the budget goes:")
         log(f"    harness_lag_ms      : {1000 * best_res['harness_lag_p95_s']:.1f}")
-        log(f"    queue_wait_ms       : {1000 * best_res['queue_wait_p95_s']:.1f}")
-        log(f"    inference_ms        : {1000 * best_res['service_p95_s']:.1f}")
-        log(f"    ipc_ms              : {1000 * best_res['ipc_p95_s']:.1f}")
-        log(f"    text_encode_ms      : {1000 * best_res['text_encode_mean_s']:.1f}")
-        log(f"    denoise_ms          : {1000 * best_res['denoise_mean_s']:.1f}")
-        log(f"    vae_decode_ms       : {1000 * best_res['decode_mean_s']:.1f}")
-        log(f"    jpeg_encode_ms      : {1000 * best_res['jpeg_mean_s']:.1f}")
-        log("    (queue/inference/ipc/lag are p95; the four stages are means)")
+        if is_vllm:
+            # No queue/service split from outside the server: its own time
+            # includes queueing inside its engine.
+            log(f"    server_time_ms      : {1000 * best_res['server_p95_s']:.1f}")
+            log(f"    http_overhead_ms    : {1000 * best_res['http_p95_s']:.1f}")
+            log("    (p95; server_time includes queueing inside vLLM; "
+                "http_overhead is round trip minus server_time)")
+        else:
+            log(f"    queue_wait_ms       : {1000 * best_res['queue_wait_p95_s']:.1f}")
+            log(f"    inference_ms        : {1000 * best_res['service_p95_s']:.1f}")
+            log(f"    ipc_ms              : {1000 * best_res['ipc_p95_s']:.1f}")
+            log(f"    text_encode_ms      : {1000 * best_res['text_encode_mean_s']:.1f}")
+            log(f"    denoise_ms          : {1000 * best_res['denoise_mean_s']:.1f}")
+            log(f"    vae_decode_ms       : {1000 * best_res['decode_mean_s']:.1f}")
+            log(f"    jpeg_encode_ms      : {1000 * best_res['jpeg_mean_s']:.1f}")
+            log("    (queue/inference/ipc/lag are p95; the four stages are means)")
 
         if best_res.get("resource_samples"):
             log("")
@@ -1382,21 +2095,28 @@ def main():
     with open(csv_path, "w", newline="", encoding="utf-8") as fh:
         wr = csv.writer(fh)
         wr.writerow(["level_rpm", "index", "measured", "status", "replica",
+                     "scheduled_offset_s", "done_offset_s",
                      "batch_size", "latency_s", "harness_lag_s", "queue_wait_s",
                      "service_s", "ipc_s", "text_encode_s", "denoise_s",
-                     "decode_s", "jpeg_s", "error"])
+                     "decode_s", "jpeg_s", "server_s", "http_s", "error"])
+        level_t0 = {}
         for rate, q in all_requests:
+            level_t0[rate] = min(level_t0.get(rate, q.scheduled), q.scheduled)
+        for rate, q in all_requests:
+            t0 = level_t0[rate]
             wr.writerow([f"{rate * 60:.4f}", q.index, int(q.measured), q.status,
-                         q.replica, q.batch_size, fmt_s(q.latency, 4),
+                         q.replica, fmt_s(q.scheduled - t0, 4),
+                         fmt_s(q.done - t0, 4) if q.done else "-",
+                         q.batch_size, fmt_s(q.latency, 4),
                          fmt_s(q.harness_lag_s, 4) if q.dispatched else "-",
                          fmt_s(q.queue_wait_s, 4), fmt_s(q.replica_s, 4),
                          fmt_s(q.ipc_s, 4), fmt_s(q.text_encode_s, 4),
                          fmt_s(q.denoise_s, 4), fmt_s(q.decode_s, 4),
-                         fmt_s(q.jpeg_s, 4), q.error])
+                         fmt_s(q.jpeg_s, 4), fmt_s(q.server_s, 4),
+                         fmt_s(q.http_s, 4), q.error])
 
     print(f"\nSaved results to {out_path}")
     print(f"Saved per-request timings to {csv_path}")
-
 
 if __name__ == "__main__":
     main()

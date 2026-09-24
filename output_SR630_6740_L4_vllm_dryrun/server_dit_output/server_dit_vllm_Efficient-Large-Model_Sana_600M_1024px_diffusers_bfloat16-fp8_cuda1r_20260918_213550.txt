@@ -1,0 +1,117 @@
+Timestamp  : 20260918_213550
+Script     : server_dit_vllm
+Backend    : vllm-omni
+Model      : Efficient-Large-Model/Sana_600M_1024px_diffusers
+Dataset    : byliutao/coco2014val_10k (prompts)
+Device     : cuda
+Server     : ThinkSystem SR630 V4
+CPU        : Intel(R) Xeon(R) 6740P
+CPU cores  : 96 logical, 96 physical, 2 sockets
+GPU        : NVIDIA L4 x2
+Dtype      : bfloat16
+Resolution : 1024x1024
+Steps      : 20
+Seed       : 42
+Runtime    : vllm-omni 0.26.0 (vllm 0.26.0)
+Quant      : fp8 (vLLM-Omni diffusion quantization, method=fp8, dynamic activations)
+Replicas   : 1
+Devices    : cuda:0
+CPU bind   : 0-47
+Threads    : 48
+Batch size : 1 (max)
+Batch wait : 0 ms
+vLLM args  : -
+Workload   : interactive
+Think time : 30 s
+SLA        : p95 end-to-end <= 30 s
+Drop after : 2x SLA queued (60 s)
+Requests   : 20 scored + 2 warmup per level
+Calibrate  : 2 generations per replica
+Early stop : enabled
+  pipeline: SanaPipeline via diffusers adapter
+  server: pid 3809183, http://127.0.0.1:55389, log /tmp/claude-1001/-home-lhe4/d443bcb4-8493-4db2-951c-f2014ea4052d/scratchpad/vllm_dryrun/server_dit_output/server_dit_vllm_Efficient-Large-Model_Sana_600M_1024px_diffusers_bfloat16-fp8_cuda1r_20260918_213550_server.log
+  command: /home/lhe4/vit_dit_first_cut/vllm_env/bin/vllm-omni serve /home/lhe4/vit_dit_first_cut/models/models--Efficient-Large-Model--Sana_600M_1024px_diffusers/snapshots/28f3af7689de15f3883d5863059a2fca0aa9b829 --served-model-name Efficient-Large-Model/Sana_600M_1024px_diffusers --omni --host 127.0.0.1 --port 55389 --dtype bfloat16 --max-num-seqs 1 --diffusion-load-format diffusers --diffusion-quantization-config '{"method": "fp8", "activation_scheme": "dynamic"}'
+  server healthy after 24 s
+GPU placement: full pipeline resident on GPU
+Compile    : vLLM default (diffusers adapter: pipeline runs as diffusers ships it)
+  server: warmed concurrency 1..1 in 5 s
+
+=== CALIBRATION (batch 1, sequential, per replica) ===
+  replica 0: round trip mean 2.358 s  server 2.331 s
+  service_mean_s      : 2.358
+  service_p95_s       : 2.363
+  service_cv2         : 0.0000
+  mu_rps              : 0.4240  (25.44 req/min, batch 1, all replicas)
+  images saved to     : /tmp/claude-1001/-home-lhe4/d443bcb4-8493-4db2-951c-f2014ea4052d/scratchpad/vllm_dryrun/server_dit_output/server_dit_vllm_Efficient-Large-Model_Sana_600M_1024px_diffusers_bfloat16-fp8_cuda1r_20260918_213550_images
+Monitor    : host=psutil device=NVIDIA L4 cpu_power=rapl every 1000 ms
+
+=== SWEEP ===
+->   12.721 req/min  rho= 0.50  22 arrivals, ~2 min unless stopped early
+   p50=   5.25  p95=   8.64  p99=   9.61 s  ok=20/20  drop=0  batch=-  thr=17.21 img/min  PASS  ok
+
+=== RESULT ===
+sla_seconds             : 30
+sla_percentile          : 95
+workload                : interactive
+calibrated_mu_rps       : 0.42403
+calibrated_service_s    : 2.3583
+replica_rss_gib_max     : 3.96
+gpu_peak_alloc_gib      : 9.75
+max_qps                 : 0.21201
+max_requests_per_minute : 12.721
+max_images_per_hour     : 763.2
+rho_at_capacity         : 0.500
+max_concurrent_inflight : 1.09
+think_time_s            : 30
+max_concurrent_users    : 7.4
+images_per_second       : 0.28680
+goodput_rps             : 0.28680
+sla_attainment_pct      : 100.0
+
+users by think time (Little's Law, same measurement):
+  think_time=  0.0s        :        1.1 users
+  think_time= 15.0s        :        4.3 users
+  think_time= 30.0s        :        7.4 users
+  think_time= 60.0s        :       13.8 users
+
+at the winning level:
+  requests_measured     : 20
+  dropped               : 0
+  p50_ms                : 5245.2
+  p90_ms                : 7483.4
+  p95_ms                : 8636.9
+  p99_ms                : 9608.2
+  max_ms                : 9851.0
+  avg_ms_per_image      : 5131.8
+  predicted_mean_ms     : 3537.5
+  mean_batch_size       : -
+  queue_depth_max       : 4
+  p95_drift             : x1.330
+
+  where the budget goes:
+    harness_lag_ms      : 2.0
+    server_time_ms      : 8614.3
+    http_overhead_ms    : 30.3
+    (p95; server_time includes queueing inside vLLM; http_overhead is round trip minus server_time)
+
+  resources (70 samples over the window):
+    sys_cores_busy_mean : 1.12
+    sys_cores_busy_max  : 2.11
+    sys_cpu_pct_mean    : 1.2
+    cpu_power_w_mean    : 4004.2
+    gpu_util_pct_mean   : 36.0
+    gpu_mem_used_gib_max: 10.46
+    gpu_power_w_mean    : 54.1
+    gpu_power_w_max     : 69.7
+    gpu_sm_clock_mhz_mean: 1901
+    gpu_temp_c_max      : 58
+    power_w_mean        : 4058.2
+    power_source        : gpu NVML board + cpu RAPL package
+    images_per_second_per_w: 0.000071
+    joules_per_image    : 14150.0
+
+NOTE: every ladder rung passed; capacity is a floor, not a ceiling. Extend --ladder.
+
+=== LADDER ===
+  req/min   rho   p50 s   p95 s   p99 s  mean s  pred s  img/min attain% drop batch qmax  cores  gpu%      W  verdict
+   12.721  0.50    5.25    8.64    9.61    5.13    3.54    17.21   100.0    0     -    4    1.1  36.0 4058.2  PASS ok

@@ -103,6 +103,7 @@ CPU RUNS
 import argparse
 import asyncio
 import io
+import os
 import random
 import statistics
 import sys
@@ -123,18 +124,28 @@ if __package__ in (None, ""):
 from common.paths import DATASET_DIR, MODELS_DIR, OUTPUT_ROOT, ensure_dirs
 
 import torch
-from datasets import load_dataset
 from PIL import Image
 from transformers import AutoImageProcessor, AutoModel, AutoModelForImageClassification
 
-from common import hostinfo, quantize
+from common import hostinfo, hub, quantize
 from common.util import percentile, slope
-from vit.vit_common import DATASET_NAME, MODELS
+from vit.vit_common import DATASET_NAME, MODELS, load_validation
 
 OUTPUT_DIR = OUTPUT_ROOT / "server_vit_output"
 
+# Two intra-op threads suit a GPU run, where this process only has to feed
+# the device and extra threads just fight the preprocessing pool. It is the
+# wrong default for --device cpu, where the model itself runs here, so main()
+# raises it; see CPU_DEFAULT_THREADS.
 torch.set_num_threads(2)
 torch.set_num_interop_threads(1)
+
+# Sweet spot measured on the 6740P at batch 1, p95 per request: ViT-L 67 ms at
+# 16 threads against 243 ms at 2 and 379 ms at 48; DINOv2-giant is flatter and
+# prefers fewer (338 ms at 8, 390 ms at 16, 717 ms at 32). Small-batch CPU
+# inference stops scaling early and then goes backwards as sync overhead grows
+# - see vit_benchmark.py's docstring. Per model, so --threads overrides it.
+CPU_DEFAULT_THREADS = 16
 
 def parse_args():
     p = argparse.ArgumentParser(
@@ -169,7 +180,7 @@ def parse_args():
     p.add_argument(
         "--image-processor",
         choices=["slow", "fast"],
-        default="slow",
+        default="fast",
         help="transformers image-processor backend: 'slow' is the PIL/numpy "
         "path, 'fast' the torchvision one. Defaults to slow, which is also "
         "what vit_benchmark.py gets, because 'fast' is a footgun here: it "
@@ -885,6 +896,9 @@ def main():
               "them into the surrounding kernels.")
     if args.threads is not None:
         torch.set_num_threads(args.threads)
+    elif args.device == "cpu":
+        # Not the module-level 2, which is for feeding a GPU.
+        torch.set_num_threads(min(CPU_DEFAULT_THREADS, os.cpu_count() or 1))
 
     dtype = torch.float32 if args.dtype == "float32" else torch.bfloat16
     is_dino = "dinov2" in args.model.lower()
@@ -939,13 +953,7 @@ def main():
     # Same dataset plumbing as vit_benchmark.py: ImageNet is gated (accept the
     # terms, then `hf auth login`), data_files restricts resolution to the
     # validation shards so the 140 GB train split is never prepared.
-    ds = load_dataset(
-        DATASET_NAME,
-        data_files={"validation": "data/validation-*"},
-        split="validation",
-        cache_dir=str(DATASET_DIR),
-        verification_mode="no_checks",
-    )
+    ds = load_validation(DATASET_DIR, log=log)
     n_images = min(args.images, len(ds))
     # Strided rather than contiguous: ImageNet validation is ordered by class,
     # so rows[:256] would be 256 images of one or two classes - a biased pool
@@ -963,17 +971,20 @@ def main():
         log("Model load : skipped (--selftest)")
         server = NullServer()
     else:
-        processor = AutoImageProcessor.from_pretrained(
+        processor = hub.load_cached(
+            AutoImageProcessor.from_pretrained,
             args.model,
             cache_dir=str(MODELS_DIR),
             use_fast=(args.image_processor == "fast"),
+            log=log,
         )
         if is_dino:
-            model = AutoModel.from_pretrained(args.model, cache_dir=str(MODELS_DIR))
+            model = hub.load_cached(AutoModel.from_pretrained, args.model,
+                                    cache_dir=str(MODELS_DIR), log=log)
         else:
-            model = AutoModelForImageClassification.from_pretrained(
-                args.model, cache_dir=str(MODELS_DIR)
-            )
+            model = hub.load_cached(
+                AutoModelForImageClassification.from_pretrained,
+                args.model, cache_dir=str(MODELS_DIR), log=log)
         model = model.to(device=args.device, dtype=dtype).eval()
         # Before compile on purpose: torchao swaps weights for tensor
         # subclasses, and tracing the bf16 layers first would only be thrown

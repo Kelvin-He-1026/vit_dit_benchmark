@@ -1,0 +1,92 @@
+Timestamp  : 20260922_190720
+Script     : server_vit_benchmark
+Model      : google/vit-base-patch16-224
+Dataset    : ILSVRC/imagenet-1k
+Device     : cpu
+Server     : ThinkSystem SR630 V4
+CPU        : Intel(R) Xeon(R) 6740P
+CPU cores  : 96 logical, 96 physical, 2 sockets
+GPU        : NVIDIA L4 x2
+Dtype      : bfloat16
+Quant      : disabled
+Workload   : interactive
+Think time : 5 s
+SLA        : p95 end-to-end <= 100 ms
+Batch size : 32 (max)
+Batch wait : 5 ms
+Pre workers: 8
+Samples    : 256
+Warmup     : 5 s per level
+Measure    : 120 s per level
+Seed       : 42
+Compile    : enabled
+Processor  : fast
+Threads    : 2
+Self-test  : disabled
+Payloads   : 256 JPEGs, 67.4 KiB avg
+Warmed buckets: 1,2,4,8,16,32 x3
+Monitor    : host=psutil device=off every 250 ms
+
+=== SWEEP (req/s) ===
+[    8.00 req/s] n=   903  p50=   51.2  p95=   116.8  p99=   212.3 ms  batch=  1.2  cpu=  0.7c  gpu=  nan%  FAIL  p95 116.8 ms > 100 ms
+[    4.00 req/s] n=   456  p50=   50.5  p95=    81.0  p99=    94.9 ms  batch=  1.1  cpu=  0.4c  gpu=  nan%  PASS  ok
+[    5.66 req/s] n=   663  p50=   50.7  p95=    91.5  p99=   137.0 ms  batch=  1.1  cpu=  0.5c  gpu=  nan%  PASS  ok
+[    6.73 req/s] n=   771  p50=   50.6  p95=   105.4  p99=   180.5 ms  batch=  1.1  cpu=  0.6c  gpu=  nan%  FAIL  p95 105.4 ms > 100 ms
+[    6.17 req/s] n=   718  p50=   50.7  p95=    98.0  p99=   175.9 ms  batch=  1.1  cpu=  0.6c  gpu=  nan%  PASS  ok
+[    6.44 req/s] n=   745  p50=   50.7  p95=   100.9  p99=   147.5 ms  batch=  1.1  cpu=  0.6c  gpu=  nan%  FAIL  p95 100.9 ms > 100 ms
+
+=== RESULT ===
+sla_ms                  : 100
+sla_seconds             : 0.1000
+sla_percentile          : 95
+workload                : interactive
+max_qps                 : 6.17
+max_concurrent_inflight : 0.38
+think_time_s            : 5
+max_concurrent_users    : 31.2
+images_per_second       : 5.983
+
+users by think time (Little's Law, same measurement):
+  think_time=  0.0s        :        0.4 users
+  think_time=  1.0s        :        6.5 users
+  think_time=  2.0s        :       12.7 users
+  think_time=  5.0s        :       31.2 users
+  think_time= 10.0s        :       62.1 users
+
+at the winning level:
+  requests_measured     : 718
+  p50_ms                : 50.71
+  p95_ms                : 98.00
+  p99_ms                : 175.86
+  max_ms                : 209.37
+  avg_ms_per_image      : 61.147
+  mean_batch_size       : 1.13
+  queue_depth_max       : 2
+  p95_drift             : x1.098
+
+  where the p95 budget goes (p95 of each stage):
+    harness_lag_ms      : 1.55
+    preprocess_ms       : 4.60
+    queue_wait_ms       : 39.28
+    inference_ms        : 71.78
+
+  resources (479 samples over the window):
+    cpu_logical_count   : 96
+    cpu_cores_busy_mean : 0.57
+    cpu_cores_busy_max  : 2.12
+    proc_cpu_pct_mean   : 56.8
+    sys_cpu_pct_mean    : 0.6
+    rss_gib_max         : 1.78
+    threads_max         : 92
+
+  top1_correct          : 599
+  top1_accuracy         : 0.8343
+  images                : 718
+
+=== LADDER ===
+        8.00 req/s   p95=   116.77 ms  n=   903  FAIL  p95 116.8 ms > 100 ms
+        4.00 req/s   p95=    81.05 ms  n=   456  PASS  ok
+        5.66 req/s   p95=    91.49 ms  n=   663  PASS  ok
+        6.73 req/s   p95=   105.38 ms  n=   771  FAIL  p95 105.4 ms > 100 ms
+        6.17 req/s   p95=    98.00 ms  n=   718  PASS  ok
+        6.44 req/s   p95=   100.95 ms  n=   745  FAIL  p95 100.9 ms > 100 ms

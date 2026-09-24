@@ -30,6 +30,15 @@ mu), capacity extras (req/min, goodput, SLA attainment, rho), stage split
 users-by-think-time table all pass through as logged. The think-time table
 becomes one users_think_<N>s column per think time found in any file.
 
+Its --backend vllm runs are filed as script server_dit_vllm (files
+server_dit_vllm_*), with the same capacity and ladder columns plus what only
+a vLLM run has: backend, vllm_pipeline (native vLLM-Omni implementation or
+its diffusers adapter), vllm_extra_args, vllm_command, and server_time_ms /
+http_overhead_ms in place of the stage split. compile says what actually ran
+- vLLM compiles its native pipelines and not the adapter, whatever --compile
+said - with vLLM's own wording in compile_detail. A "-" or "nan" in a log
+(not measured) is a blank cell here.
+
 One row per run hides the curve behind each headline number, so a second file
 is written next to the main CSV:
 
@@ -155,6 +164,11 @@ ARG_FIELDS = [
     "calibrate_generations",
     "drop_after_factor",
     "early_stop",
+    # server_dit_benchmark.py --backend vllm only.
+    "backend",
+    "vllm_pipeline",
+    "vllm_extra_args",
+    "vllm_command",
 ]
 
 METRIC_FIELDS = [
@@ -186,6 +200,11 @@ METRIC_FIELDS = [
     "max_requests_per_minute",
     "max_images_per_hour",
     "rho_at_capacity",
+    # server_dit: capacity measured in the winning level itself, what its
+    # stability is judged against (rho_at_capacity is against calibration).
+    "service_capacity_rpm",
+    "rho_measured",
+    "steady_state_mean_ms",
     "max_concurrent_users",
     # users_think_<N>s columns are inserted here, one per think time found.
     "max_concurrent_inflight",
@@ -220,6 +239,10 @@ METRIC_FIELDS = [
     "denoise_ms",
     "vae_decode_ms",
     "jpeg_encode_ms",
+    # server_dit_vllm: the server's own time (includes queueing inside it)
+    # and the HTTP/JSON/base64 cost around it, both p95.
+    "server_time_ms",
+    "http_overhead_ms",
     # Resource counters, same source.
     "resource_samples",
     "replica_rss_gib_max",
@@ -370,6 +393,14 @@ KEY_MAP = {
     "Requests": "requests_raw",
     "Calibrate": "calibrate_generations",
     "Early stop": "early_stop",
+    # server_dit_benchmark.py --backend vllm: how the server ran the model.
+    # "pipeline" is "SanaPipeline via diffusers adapter" or "... via native
+    # vLLM-Omni implementation"; "command" is the exact `vllm-omni serve` line
+    # (logged again on an offload relaunch, and the later one is what ran).
+    "Backend": "backend",
+    "pipeline": "vllm_pipeline",
+    "vLLM args": "vllm_extra_args",
+    "command": "vllm_command",
     # server_dit_benchmark.py: calibration, sweep and result block.
     "service_p95_s": "service_p95_s",
     "service_cv2": "service_cv2",
@@ -381,6 +412,9 @@ KEY_MAP = {
     "max_requests_per_minute": "max_requests_per_minute",
     "max_images_per_hour": "max_images_per_hour",
     "rho_at_capacity": "rho_at_capacity",
+    "service_capacity_rpm": "service_capacity_rpm",
+    "rho_measured": "rho_measured",
+    "steady_state_mean_ms": "steady_state_mean_ms",
     "goodput_rps": "goodput_rps",
     "sla_attainment_pct": "sla_attainment_pct",
     "verdict": "verdict",
@@ -393,6 +427,8 @@ KEY_MAP = {
     "vae_decode_ms": "vae_decode_ms",
     "jpeg_encode_ms": "jpeg_encode_ms",
     "joules_per_image": "joules_per_image",
+    "server_time_ms": "server_time_ms",
+    "http_overhead_ms": "http_overhead_ms",
 }
 
 # Values logged with a unit or qualifier attached, which the CSV wants as a
@@ -499,7 +535,8 @@ LABEL_KEYS = ("server", "cpu", "gpu")
 # is a "Threads" count a statement about the host: run_multisocket.py gives
 # each shard a slice of the cores, so a sharded run's thread count says how
 # the run was carved up, not what it was carved out of.
-UNSHARDED_SCRIPTS = ("server_vit_benchmark", "server_dit_benchmark", "diag_vit_inference")
+UNSHARDED_SCRIPTS = ("server_vit_benchmark", "server_dit_benchmark", "server_dit_vllm",
+                     "diag_vit_inference")
 
 
 def match_known_host(rec):
@@ -578,18 +615,21 @@ PASSTHROUGH_METRICS = (
     "denoise_s_per_image", "other_s_per_image", "denoise_pct",
     # server_dit_benchmark.py, which does not shard either.
     "max_requests_per_minute", "max_images_per_hour", "rho_at_capacity",
+    "service_capacity_rpm", "rho_measured", "steady_state_mean_ms",
     "goodput_rps", "sla_attainment_pct", "verdict", "sweep_note",
     "requests_dropped", "p90_ms", "predicted_mean_ms",
     "calibrated_mu_rps", "calibrated_service_s", "service_p95_s", "service_cv2",
     "ipc_ms", "text_encode_ms", "denoise_ms", "vae_decode_ms", "jpeg_encode_ms",
     "resource_samples", "replica_rss_gib_max", "gpu_peak_alloc_gib",
-    "joules_per_image",
+    "joules_per_image", "server_time_ms", "http_overhead_ms",
 )
 
 
 def script_name(filename):
     for prefix, name in (
         ("server_vit_", "server_vit_benchmark"),
+        # Before server_dit_: the vLLM backend's files share that prefix.
+        ("server_dit_vllm_", "server_dit_vllm"),
         ("server_dit_", "server_dit_benchmark"),
         ("vllm_sla_", "vllm_sla_sweep"),
         ("vllm_benchmark_", "vllm_dit_vit_benchmark"),
@@ -634,6 +674,13 @@ def parse_file(path):
             rec[field] = value
     rec["complete"] = "yes" if has_result else "no"
 
+    # "-" is how the benchmarks print "not measured" (no batch size visible
+    # from outside a vLLM server, no queueing prediction under batching). An
+    # empty cell says that; a literal "-" breaks every numeric filter.
+    for field, value in list(rec.items()):
+        if value in ("-", "nan"):
+            rec[field] = ""
+
     for field in NUMERIC_FIELDS & rec.keys():
         if rec[field].startswith("sweep"):
             continue
@@ -648,6 +695,10 @@ def parse_file(path):
     # Only the vLLM script logs a Runtime line; everything else is diffusers.
     # Stated explicitly so the two runtimes can be compared in one query.
     rec.setdefault("runtime", "diffusers")
+    if rec["script"] == "server_dit_vllm":
+        rec.setdefault("backend", "vllm-omni")
+    elif rec["script"].startswith(("server_dit", "dit")):
+        rec.setdefault("backend", "diffusers")
 
     # Runs predating hostinfo.py have no GPU line, but server_vit's monitor
     # line names the device it sampled - recover the SKU from it.
@@ -666,7 +717,14 @@ def parse_file(path):
 
     # "enabled (torch.compile on the transformer submodule)" -> enabled + detail
     raw = rec.get("compile_raw", "")
-    if raw.startswith("requested but skipped"):
+    if raw.startswith("vLLM default"):
+        # --backend vllm with --compile: vLLM decides. Its native pipelines get
+        # regional torch.compile; its diffusers adapter runs the pipeline
+        # uncompiled. Filed as what actually ran, with the reason kept.
+        rec["compile"] = "enabled" if "torch.compile" in raw else "disabled"
+        rec["compile_detail"] = raw
+        raw = None
+    elif raw.startswith("requested but skipped"):
         rec["compile"] = "skipped"
     elif raw.startswith("enabled"):
         rec["compile"] = "enabled"
@@ -674,8 +732,9 @@ def parse_file(path):
         rec["compile"] = "disabled"
     else:
         rec["compile"] = raw
-    detail = raw[len(rec["compile"]):].strip() if raw.startswith(rec["compile"]) else ""
-    rec["compile_detail"] = detail.strip("()").strip() if detail else ""
+    if raw is not None:
+        detail = raw[len(rec["compile"]):].strip() if raw.startswith(rec["compile"]) else ""
+        rec["compile_detail"] = detail.strip("()").strip() if detail else ""
 
     # "fp8 (w8a8, float8_e4m3 weights ...)" -> fp8 + the rest. Runs predating
     # --quant have no Quant line at all; they were all unquantised.
@@ -827,7 +886,7 @@ POINT_FIELDS = [
     "cpu_power_w_mean", "power_w_mean", "images_per_second_per_w", "file",
 ]
 
-SERVING_SCRIPTS = ("server_vit_benchmark", "server_dit_benchmark")
+SERVING_SCRIPTS = ("server_vit_benchmark", "server_dit_benchmark", "server_dit_vllm")
 THROUGHPUT_SCRIPTS = ("vit_throughput", "dit_throughput")
 
 # Sweep-table header token -> POINT_FIELDS column.

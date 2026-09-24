@@ -1,0 +1,92 @@
+Timestamp  : 20260922_234643
+Script     : server_vit_benchmark
+Model      : google/vit-large-patch16-224
+Dataset    : ILSVRC/imagenet-1k
+Device     : cpu
+Server     : ThinkSystem SR630 V4
+CPU        : Intel(R) Xeon(R) 6740P
+CPU cores  : 96 logical, 96 physical, 2 sockets
+GPU        : NVIDIA L4 x2
+Dtype      : bfloat16
+Quant      : disabled
+Workload   : interactive
+Think time : 5 s
+SLA        : p95 end-to-end <= 100 ms
+Batch size : 32 (max)
+Batch wait : 5 ms
+Pre workers: 8
+Samples    : 256
+Warmup     : 5 s per level
+Measure    : 120 s per level
+Seed       : 42
+Compile    : enabled
+Processor  : fast
+Threads    : 16
+Self-test  : disabled
+Payloads   : 256 JPEGs, 67.4 KiB avg
+Warmed buckets: 1,2,4,8,16,32 x3
+Monitor    : host=psutil device=off every 250 ms
+
+=== SWEEP (req/s) ===
+[    1.00 req/s] n=   121  p50=   48.8  p95=    65.0  p99=   128.3 ms  batch=  1.0  cpu=  0.8c  gpu=  nan%  FAIL  met SLA but not steady state (p95 drift x1.33 to 78.4 ms)
+[    0.50 req/s] n=    67  p50=   49.1  p95=    50.4  p99=    69.6 ms  batch=  1.0  cpu=  0.4c  gpu=  nan%  PASS  ok
+[    0.71 req/s] n=    91  p50=   49.6  p95=    56.2  p99=    64.3 ms  batch=  1.0  cpu=  0.6c  gpu=  nan%  PASS  ok
+[    0.84 req/s] n=   103  p50=   53.4  p95=    60.2  p99=    89.2 ms  batch=  1.0  cpu=  0.7c  gpu=  nan%  PASS  ok
+[    0.92 req/s] n=   109  p50=   53.8  p95=    73.1  p99=    92.4 ms  batch=  1.0  cpu=  0.8c  gpu=  nan%  FAIL  met SLA but not steady state (p95 drift x1.41 to 80.2 ms)
+[    0.88 req/s] n=   104  p50=   53.8  p95=    59.9  p99=    90.6 ms  batch=  1.0  cpu=  0.7c  gpu=  nan%  PASS  ok
+
+=== RESULT ===
+sla_ms                  : 100
+sla_seconds             : 0.1000
+sla_percentile          : 95
+workload                : interactive
+max_qps                 : 0.88
+max_concurrent_inflight : 0.05
+think_time_s            : 5
+max_concurrent_users    : 4.4
+images_per_second       : 0.867
+
+users by think time (Little's Law, same measurement):
+  think_time=  0.0s        :        0.0 users
+  think_time=  1.0s        :        0.9 users
+  think_time=  2.0s        :        1.8 users
+  think_time=  5.0s        :        4.4 users
+  think_time= 10.0s        :        8.8 users
+
+at the winning level:
+  requests_measured     : 104
+  p50_ms                : 53.78
+  p95_ms                : 59.87
+  p99_ms                : 90.56
+  max_ms                : 97.01
+  avg_ms_per_image      : 55.121
+  mean_batch_size       : 1.00
+  queue_depth_max       : 1
+  p95_drift             : x1.036
+
+  where the p95 budget goes (p95 of each stage):
+    harness_lag_ms      : 1.09
+    preprocess_ms       : 3.84
+    queue_wait_ms       : 5.18
+    inference_ms        : 45.79
+
+  resources (472 samples over the window):
+    cpu_logical_count   : 96
+    cpu_cores_busy_mean : 0.75
+    cpu_cores_busy_max  : 8.50
+    proc_cpu_pct_mean   : 74.9
+    sys_cpu_pct_mean    : 0.8
+    rss_gib_max         : 2.18
+    threads_max         : 146
+
+  top1_correct          : 86
+  top1_accuracy         : 0.8269
+  images                : 104
+
+=== LADDER ===
+        1.00 req/s   p95=    65.04 ms  n=   121  FAIL  met SLA but not steady state (p95 drift x1.33 to 78.4 ms)
+        0.50 req/s   p95=    50.38 ms  n=    67  PASS  ok
+        0.71 req/s   p95=    56.16 ms  n=    91  PASS  ok
+        0.84 req/s   p95=    60.25 ms  n=   103  PASS  ok
+        0.92 req/s   p95=    73.13 ms  n=   109  FAIL  met SLA but not steady state (p95 drift x1.41 to 80.2 ms)
+        0.88 req/s   p95=    59.87 ms  n=   104  PASS  ok

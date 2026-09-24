@@ -1,0 +1,71 @@
+Timestamp  : 20260918_213753
+Script     : server_dit_vllm
+Backend    : vllm-omni
+Model      : stabilityai/stable-diffusion-3.5-large
+Dataset    : byliutao/coco2014val_10k (prompts)
+Device     : cuda
+Server     : ThinkSystem SR630 V4
+CPU        : Intel(R) Xeon(R) 6740P
+CPU cores  : 96 logical, 96 physical, 2 sockets
+GPU        : NVIDIA L4 x2
+Dtype      : bfloat16
+Resolution : 1024x1024
+Steps      : 20
+Seed       : 42
+Runtime    : vllm-omni 0.26.0 (vllm 0.26.0)
+Quant      : disabled
+Replicas   : 1
+Devices    : cuda:0
+CPU bind   : 0-47
+Threads    : 48
+Batch size : 1 (max)
+Batch wait : 0 ms
+vLLM args  : -
+Workload   : interactive
+Think time : 30 s
+SLA        : p95 end-to-end <= 30 s
+Drop after : 2x SLA queued (60 s)
+Requests   : 20 scored + 2 warmup per level
+Calibrate  : 2 generations per replica
+Early stop : enabled
+NOTE       : stabilityai/stable-diffusion-3.5-large is gated; `hf auth login` must have access
+  pipeline: StableDiffusion3Pipeline via native vLLM-Omni implementation
+  server: pid 3810319, http://127.0.0.1:55381, log /tmp/claude-1001/-home-lhe4/d443bcb4-8493-4db2-951c-f2014ea4052d/scratchpad/vllm_dryrun/server_dit_output/server_dit_vllm_stabilityai_stable-diffusion-3.5-large_bfloat16_cuda1r_20260918_213753_server.log
+  command: /home/lhe4/vit_dit_first_cut/vllm_env/bin/vllm-omni serve /home/lhe4/vit_dit_first_cut/models/models--stabilityai--stable-diffusion-3.5-large/snapshots/ceddf0a7fdf2064ea28e2213e3b84e4afa170a0f --served-model-name stabilityai/stable-diffusion-3.5-large --omni --host 127.0.0.1 --port 55381 --dtype bfloat16 --max-num-seqs 1
+  server ran out of GPU memory resident; relaunching with --enable-cpu-offload
+  server: pid 3811469, http://127.0.0.1:34563, log /tmp/claude-1001/-home-lhe4/d443bcb4-8493-4db2-951c-f2014ea4052d/scratchpad/vllm_dryrun/server_dit_output/server_dit_vllm_stabilityai_stable-diffusion-3.5-large_bfloat16_cuda1r_20260918_213753_server.log
+  command: /home/lhe4/vit_dit_first_cut/vllm_env/bin/vllm-omni serve /home/lhe4/vit_dit_first_cut/models/models--stabilityai--stable-diffusion-3.5-large/snapshots/ceddf0a7fdf2064ea28e2213e3b84e4afa170a0f --served-model-name stabilityai/stable-diffusion-3.5-large --omni --host 127.0.0.1 --port 34563 --dtype bfloat16 --max-num-seqs 1 --enable-cpu-offload
+  server healthy after 70 s
+GPU placement: CPU offload (--enable-cpu-offload, resident placement ran out of memory)
+Compile    : vLLM default (regional torch.compile on the transformer blocks)
+  server: warmed concurrency 1..1 in 41 s
+
+=== CALIBRATION (batch 1, sequential, per replica) ===
+  replica 0: round trip mean 16.489 s  server 16.466 s
+  service_mean_s      : 16.489
+  service_p95_s       : 16.497
+  service_cv2         : 0.0000
+  mu_rps              : 0.0606  (3.64 req/min, batch 1, all replicas)
+  images saved to     : /tmp/claude-1001/-home-lhe4/d443bcb4-8493-4db2-951c-f2014ea4052d/scratchpad/vllm_dryrun/server_dit_output/server_dit_vllm_stabilityai_stable-diffusion-3.5-large_bfloat16_cuda1r_20260918_213753_images
+Monitor    : host=psutil device=NVIDIA L4 cpu_power=rapl every 1000 ms
+
+=== SWEEP ===
+->    1.819 req/min  rho= 0.50  22 arrivals, ~12 min unless stopped early
+   p50=  41.97  p95=  45.64  p99=  45.96 s  ok=2/20  drop=0  batch=-  thr=2.21 img/min  FAIL  stopped early: 2 scored misses already put p95 over the SLA
+
+=== RESULT ===
+sla_seconds             : 30
+sla_percentile          : 95
+workload                : interactive
+calibrated_mu_rps       : 0.06065
+calibrated_service_s    : 16.4890
+replica_rss_gib_max     : 44.09
+gpu_peak_alloc_gib      : 20.01
+max_qps                 : 0
+max_requests_per_minute : 0
+max_concurrent_users    : 0
+verdict                 : SLA unmet at every level tried
+
+=== LADDER ===
+  req/min   rho   p50 s   p95 s   p99 s  mean s  pred s  img/min attain% drop batch qmax  cores  gpu%      W  verdict
+    1.819  0.50   41.97   45.64   45.96   41.97   24.73     2.21     0.0    0     -    2    1.2  99.2 5181.5  FAIL stopped early: 2 scored misses already put p95 over the SLA

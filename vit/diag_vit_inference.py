@@ -54,14 +54,14 @@ if __package__ in (None, ""):
 from vit import server_vit_benchmark as svb
 
 import torch
-from datasets import load_dataset
 from PIL import Image
 from torch.cuda import nvtx
 from transformers import AutoImageProcessor, AutoModel, AutoModelForImageClassification
 
-from common import hostinfo
+from common import hostinfo, hub
 from common.paths import DATASET_DIR, MODELS_DIR, OUTPUT_ROOT
 from common.util import percentile
+from vit.vit_common import load_validation
 
 torch.set_num_threads(2)
 # set_num_interop_threads may only be called once per process; the import
@@ -395,23 +395,19 @@ def main():
         f"{torch.get_num_interop_threads()} inter-op")
     log(f"Parts      : {args.parts}")
 
-    ds = load_dataset(
-        svb.DATASET_NAME,
-        data_files={"validation": "data/validation-*"},
-        split="validation",
-        cache_dir=str(DATASET_DIR),
-        verification_mode="no_checks",
-    )
+    ds = load_validation(DATASET_DIR)
     n_images = min(args.images, len(ds))
     stride = max(1, len(ds) // n_images)
     payloads, labels = svb.build_payloads([ds[i * stride] for i in range(n_images)])
 
-    processor = AutoImageProcessor.from_pretrained(
+    processor = hub.load_cached(
+        AutoImageProcessor.from_pretrained,
         args.model, cache_dir=str(MODELS_DIR),
-        use_fast=(args.image_processor == "fast"),
+        use_fast=(args.image_processor == "fast"), log=log,
     )
     cls = AutoModel if is_dino else AutoModelForImageClassification
-    model = cls.from_pretrained(args.model, cache_dir=str(MODELS_DIR))
+    model = hub.load_cached(cls.from_pretrained, args.model,
+                            cache_dir=str(MODELS_DIR), log=log)
     model = model.to(device="cuda", dtype=dtype).eval()
     cache = decode_all(processor, payloads)
     cpu_tensors = [cache[id(p)] for p in payloads]

@@ -67,10 +67,9 @@ from common.paths import DATASET_DIR, MODELS_DIR, OUTPUT_ROOT, ensure_dirs
 
 import torch
 import torch.multiprocessing
-from datasets import load_dataset
 from transformers import AutoImageProcessor, AutoModel, AutoModelForImageClassification
 
-from common import hostinfo, quantize, resources
+from common import hostinfo, hub, quantize, resources
 from common.sweep import (
     ReplicaPool,
     as_list,
@@ -83,7 +82,7 @@ from common.sweep import (
     split_cores,
 )
 from common.util import sync
-from vit.vit_common import DATASET_NAME, MODELS
+from vit.vit_common import DATASET_NAME, MODELS, load_validation
 
 OUTPUT_DIR = OUTPUT_ROOT / "vit_output"
 
@@ -354,10 +353,12 @@ def _replica_main(conn, cfg, pool):
     dtype = _torch.float32 if cfg["dtype"] == "float32" else _torch.bfloat16
 
     from transformers import AutoModel, AutoModelForImageClassification
+    from common import hub as _hub
     from common import quantize as _quantize
 
     cls = AutoModel if cfg["is_dino"] else AutoModelForImageClassification
-    model = cls.from_pretrained(cfg["model"], cache_dir=cfg["models_dir"])
+    model = _hub.load_cached(cls.from_pretrained, cfg["model"],
+                             cache_dir=cfg["models_dir"])
     model = model.to(device=device, dtype=dtype).eval()
     model = _quantize.apply(model, cfg["quant"])
     if cfg["compile"]:
@@ -457,8 +458,8 @@ def build_pool(model_name, rows, n_images, log):
     not share a normalisation. Shared memory so spawning N replicas does not
     mean N copies of the pixels.
     """
-    processor = AutoImageProcessor.from_pretrained(
-        model_name, cache_dir=str(MODELS_DIR))
+    processor = hub.load_cached(AutoImageProcessor.from_pretrained,
+                                model_name, cache_dir=str(MODELS_DIR))
     images = [r["image"].convert("RGB") for r in rows[:n_images]]
     pool = processor(images=images, return_tensors="pt")["pixel_values"]
     pool = pool.contiguous().share_memory_()
@@ -818,13 +819,7 @@ def main():
     # (train included, ~140GB) before filtering down to validation at the end.
     # verification_mode="no_checks" is required because we're intentionally
     # skipping the train/test splits that dataset_info.json expects.
-    ds = load_dataset(
-        DATASET_NAME,
-        data_files={"validation": "data/validation-*"},
-        split="validation",
-        cache_dir=str(DATASET_DIR),
-        verification_mode="no_checks",
-    )
+    ds = load_validation(DATASET_DIR, log=log)
     # --samples sizes the accuracy pass; the sweep instead needs exactly the
     # pool it will cycle, however small --samples happens to be.
     wanted = args.pool_images if args.throughput else args.samples
@@ -845,14 +840,17 @@ def main():
         run_throughput(args, rows, timestamp, list(output_lines), log)
         return
 
-    processor = AutoImageProcessor.from_pretrained(args.model, cache_dir=str(MODELS_DIR))
+    processor = hub.load_cached(AutoImageProcessor.from_pretrained, args.model,
+                                cache_dir=str(MODELS_DIR), log=log)
 
     is_dino = "dinov2" in args.model.lower()
 
     if is_dino:
-        model = AutoModel.from_pretrained(args.model, cache_dir=str(MODELS_DIR))
+        model = hub.load_cached(AutoModel.from_pretrained, args.model,
+                                cache_dir=str(MODELS_DIR), log=log)
     else:
-        model = AutoModelForImageClassification.from_pretrained(args.model, cache_dir=str(MODELS_DIR))
+        model = hub.load_cached(AutoModelForImageClassification.from_pretrained,
+                                args.model, cache_dir=str(MODELS_DIR), log=log)
 
     model = model.to(device=args.device, dtype=dtype)
     model.eval()

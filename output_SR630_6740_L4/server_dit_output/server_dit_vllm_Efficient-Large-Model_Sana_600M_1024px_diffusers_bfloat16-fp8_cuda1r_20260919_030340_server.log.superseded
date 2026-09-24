@@ -1,0 +1,406 @@
+
+$ /home/lhe4/vit_dit_first_cut/vllm_env/bin/vllm-omni serve /home/lhe4/vit_dit_first_cut/models/models--Efficient-Large-Model--Sana_600M_1024px_diffusers/snapshots/28f3af7689de15f3883d5863059a2fca0aa9b829 --served-model-name Efficient-Large-Model/Sana_600M_1024px_diffusers --omni --host 127.0.0.1 --port 46195 --dtype bfloat16 --max-num-seqs 1 --diffusion-load-format diffusers --diffusion-quantization-config '{"method": "fp8", "activation_scheme": "dynamic"}'
+INFO 09-19 03:03:57 [patch.py:252] NVFP4 W4A4 weight_scale NaN-clamp: installed.
+INFO 09-19 03:03:57 [patch.py:481] [cumem-cuda] CuMemAllocator._python_free_callback patched: asleep guard extended to all platforms.
+Unable to import `torchao` Tensor objects. This may affect loading checkpoints serialized with `torchao`
+INFO 09-19 03:03:59 [serve.py:175] Detected diffusion model: /home/lhe4/vit_dit_first_cut/models/models--Efficient-Large-Model--Sana_600M_1024px_diffusers/snapshots/28f3af7689de15f3883d5863059a2fca0aa9b829
+INFO 09-19 03:03:59 [logo.py:52]        [97m█     █     █▄   ▄█[0m    [34m   ▄▀▀[38;5;208m▀▀▄ [0m[97m█▄   ▄█ █▄    █ ▀█▀ [0m
+INFO 09-19 03:03:59 [logo.py:52]  [38;5;208m▄▄[0m [34m▄█[0m [97m█     █     █ ▀▄▀ █[0m[97m  ▄▄▄ [0m[34m █    [38;5;208m█ [0m[97m█ ▀▄▀ █ █ ▀▄  █  █  [0m
+INFO 09-19 03:03:59 [logo.py:52]   [38;5;208m█[0m[34m▄█▀[0m [97m█     █     █     █[0m[97m      [0m[34m █    [38;5;208m█ [0m[97m█     █ █   ▀▄█  █  [0m
+INFO 09-19 03:03:59 [logo.py:52]    [34m▀▀[0m  [97m▀▀▀▀▀ ▀▀▀▀▀ ▀     ▀[0m      [35m  ▀▀▀▀  [0m[97m▀     ▀ ▀     ▀ ▀▀▀ [0m
+INFO 09-19 03:03:59 [logo.py:52] 
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:03:59 [api_utils.py:345] vLLM server version 0.26.0, serving model /home/lhe4/vit_dit_first_cut/models/models--Efficient-Large-Model--Sana_600M_1024px_diffusers/snapshots/28f3af7689de15f3883d5863059a2fca0aa9b829
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:03:59 [api_utils.py:273] non-default args: {'model_tag': '/home/lhe4/vit_dit_first_cut/models/models--Efficient-Large-Model--Sana_600M_1024px_diffusers/snapshots/28f3af7689de15f3883d5863059a2fca0aa9b829', 'host': '127.0.0.1', 'port': 46195, 'model': '/home/lhe4/vit_dit_first_cut/models/models--Efficient-Large-Model--Sana_600M_1024px_diffusers/snapshots/28f3af7689de15f3883d5863059a2fca0aa9b829', 'dtype': 'bfloat16', 'served_model_name': ['Efficient-Large-Model/Sana_600M_1024px_diffusers'], 'max_num_seqs': 1}
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:03:59 [omni_base.py:172] [AsyncOmni] Initializing with model /home/lhe4/vit_dit_first_cut/models/models--Efficient-Large-Model--Sana_600M_1024px_diffusers/snapshots/28f3af7689de15f3883d5863059a2fca0aa9b829
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:03:59 [async_omni_engine.py:175] [AsyncOmniEngine] Initializing with model /home/lhe4/vit_dit_first_cut/models/models--Efficient-Large-Model--Sana_600M_1024px_diffusers/snapshots/28f3af7689de15f3883d5863059a2fca0aa9b829
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:03:59 [async_omni_engine.py:274] [AsyncOmniEngine] Launching Orchestrator thread with 1 stages
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:03:59 [stage_utils.py:167] Stage 0 logical-to-physical device mapping: 0->0
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:03:59 [factory.py:399] Building quantization config: fp8
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:03:59 [multiproc_executor.py:254] Starting server...
+[32mINFO[0m [90m09-19 03:04:05[0m [90m[patch.py:252][0m NVFP4 W4A4 weight_scale NaN-clamp: installed.
+[32mINFO[0m [90m09-19 03:04:05[0m [90m[patch.py:481][0m [cumem-cuda] CuMemAllocator._python_free_callback patched: asleep guard extended to all platforms.
+Unable to import `torchao` Tensor objects. This may affect loading checkpoints serialized with `torchao`
+[32mINFO[0m [90m09-19 03:04:07[0m [90m[diffusion_worker.py:819][0m Worker 0 created result MessageQueue
+[32mINFO[0m [90m09-19 03:04:07[0m [90m[scheduler.py:252][0m Chunked prefill is enabled with max_num_batched_tokens=2048.
+[32mINFO[0m [90m09-19 03:04:07[0m [90m[vllm.py:1109][0m Asynchronous scheduling is enabled.
+[32mINFO[0m [90m09-19 03:04:07[0m [90m[kernel.py:295][0m Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['native'], fused_add_rms_norm=['native'])
+[32mINFO[0m [90m09-19 03:04:07[0m [90m[diffusion_worker.py:303][0m Final IR op priority after setting vLLM-Omni overrides: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'])
+[32mINFO[0m [90m09-19 03:04:07[0m [90m[diffusion_worker.py:315][0m Worker 0: Initialized device and distributed environment.
+[32mINFO[0m [90m09-19 03:04:07[0m [90m[parallel_state.py:634][0m Building SP subgroups from explicit sp_group_ranks (sp_size=1, ulysses=1, ring=1, use_ulysses_low=True).
+[32mINFO[0m [90m09-19 03:04:07[0m [90m[parallel_state.py:676][0m SP group details for rank 0: sp_group=[0], ulysses_group=[0], ring_group=[0]
+Loading pipeline components...:   0%|          | 0/5 [00:00<?, ?it/s]Loading pipeline components...:  20%|██        | 1/5 [00:00<00:00,  7.28it/s]
+Loading weights:   0%|          | 0/288 [00:00<?, ?it/s][ALoading weights: 100%|██████████| 288/288 [00:00<00:00, 9298.00it/s]
+Loading pipeline components...:  40%|████      | 2/5 [00:00<00:00,  8.07it/s]Loading pipeline components...:  60%|██████    | 3/5 [00:01<00:01,  1.55it/s]Loading pipeline components...:  80%|████████  | 4/5 [00:01<00:00,  1.99it/s]Loading pipeline components...: 100%|██████████| 5/5 [00:01<00:00,  2.76it/s]
+Attention backends are an experimental feature and the API may be subject to change.
+Attention backends are an experimental feature and the API may be subject to change.
+Attention backends are an experimental feature and the API may be subject to change.
+Attention backends are an experimental feature and the API may be subject to change.
+Attention backends are an experimental feature and the API may be subject to change.
+Attention backends are an experimental feature and the API may be subject to change.
+Attention backends are an experimental feature and the API may be subject to change.
+Attention backends are an experimental feature and the API may be subject to change.
+Attention backends are an experimental feature and the API may be subject to change.
+[32mINFO[0m [90m09-19 03:04:11[0m [90m[pipeline_diffusers_adapter.py:327][0m Set diffusers attention backend to '_native_flash', adapted from user config value 'None'.
+[33mWARNING[0m [90m09-19 03:04:11[0m [90m[pipeline_diffusers_adapter.py:332][0m The following failed attempts were made before choosing this diffusers backend: {'_flash_3_hub': "Backend '_flash_3_hub' is not usable because the `kernels` package isn't available. Please install it with `pip install kernels`.", '_flash_3_varlen_hub': "Backend '_flash_3_varlen_hub' is not usable because the `kernels` package isn't available. Please install it with `pip install kernels`.", '_flash_3': "Flash Attention 3 backend '_flash_3' is not usable because of missing package or the version is too old. Please build FA3 beta release from source.", '_flash_varlen_3': "Flash Attention 3 backend '_flash_varlen_3' is not usable because of missing package or the version is too old. Please build FA3 beta release from source.", 'flash_hub': "Backend 'flash_hub' is not usable because the `kernels` package isn't available. Please install it with `pip install kernels`.", 'flash_varlen_hub': "Backend 'flash_varlen_hub' is not usable because the `kernels` package isn't available. Please install it with `pip install kernels`.", 'flash': "Flash Attention backend 'flash' is not usable because of missing package or the version is too old. Please install `flash-attn>=2.6.3`.", 'flash_varlen': "Flash Attention backend 'flash_varlen' is not usable because of missing package or the version is too old. Please install `flash-attn>=2.6.3`."}
+[32mINFO[0m [90m09-19 03:04:11[0m [90m[diffusion_model_runner.py:242][0m Model loading took 6.3150 GiB and 3.777959 seconds
+[32mINFO[0m [90m09-19 03:04:11[0m [90m[diffusion_model_runner.py:247][0m Model runner: Model loaded successfully.
+[32mINFO[0m [90m09-19 03:04:11[0m [90m[diffusion_model_runner.py:321][0m Model runner: Initialization complete.
+[32mINFO[0m [90m09-19 03:04:11[0m [90m[diffusion_worker.py:374][0m Worker 0: Process-scoped GPU memory after model loading: 6.55 GiB.
+[32mINFO[0m [90m09-19 03:04:11[0m [90m[manager.py:96][0m Initializing DiffusionLoRAManager: device=cuda:0, dtype=torch.bfloat16, max_cached_adapters=1, static_lora_path=None
+[32mINFO[0m [90m09-19 03:04:11[0m [90m[diffusion_worker.py:258][0m Worker 0: Initialization complete.
+[32mINFO[0m [90m09-19 03:04:11[0m [90m[diffusion_worker.py:1185][0m Worker 0: Scheduler loop started.
+[32mINFO[0m [90m09-19 03:04:11[0m [90m[diffusion_worker.py:1031][0m Worker 0 ready to receive requests via shared memory
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:11 [multiproc_executor.py:689] Async result pump started
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:11 [diffusion_engine.py:279] [RequestBatch] engine init max_num_seqs=1 max_wait_ms=0.0
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:11 [diffusion_engine.py:885] dummy run to warm up the model
+[32mINFO[0m [90m09-19 03:04:11[0m [90m[pipeline_diffusers_adapter.py:392][0m Calling diffusers pipeline with kwargs: {'prompt': 'dummy run', 'generator': 'Generator with seed 1174603710 on device cuda:0', 'height': 512, 'width': 512, 'num_inference_steps': 1, 'guidance_scale': 0.0, 'eta': 0.0, 'output_type': 'pil', 'num_images_per_prompt': 1}
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:00<00:00,  3.48it/s]100%|██████████| 1/1 [00:00<00:00,  3.48it/s]
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [inline_stage_diffusion_client.py:72] [InlineStageDiffusionClient] stage-0 [rep-0] initialized inline (batch_size=1)
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [stage_runtime.py:662] [StageRuntime] Stage 0 replica 0 initialized (diffusion, batch_size=1)
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [orchestrator.py:507] [Orchestrator] Starting event loop
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [async_omni_engine.py:306] [AsyncOmniEngine] Orchestrator ready with 1 stages
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [omni_base.py:190] [AsyncOmni] AsyncOmniEngine initialized in 14.26 seconds
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [omni_base.py:210] [AsyncOmni] Initialized with 1 stages for model /home/lhe4/vit_dit_first_cut/models/models--Efficient-Large-Model--Sana_600M_1024px_diffusers/snapshots/28f3af7689de15f3883d5863059a2fca0aa9b829
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [api_server.py:734] Detected pure diffusion mode (single diffusion stage)
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [speaker_cache.py:242] Speaker cache ready (max_bytes=536870912)
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [serving_speech.py:350] Speaker storage: dir=/home/lhe4/.cache/vllm-omni/speakers, max_speakers=1000, restored=0
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [serving.py:91] Robot OpenPI serving disabled for model Efficient-Large-Model/Sana_600M_1024px_diffusers
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [api_server.py:807] Pure diffusion API server initialized for model: Efficient-Large-Model/Sana_600M_1024px_diffusers
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [api_server.py:534] Starting vLLM API server (pure diffusion mode) on http://127.0.0.1:46195
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:37] Available routes are:
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /openapi.json, Methods: GET, HEAD
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /docs, Methods: GET, HEAD
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /docs/oauth2-redirect, Methods: GET, HEAD
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /redoc, Methods: GET, HEAD
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /load, Methods: GET
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /version, Methods: GET
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /health, Methods: GET
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /metrics, Methods: GET
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /tokenize, Methods: POST
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /detokenize, Methods: POST
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /ping, Methods: GET
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /ping, Methods: POST
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /invocations, Methods: POST
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /v1/responses, Methods: POST
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /v1/responses/{response_id}, Methods: GET
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /v1/responses/{response_id}/cancel, Methods: POST
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /v1/completions, Methods: POST
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /v1/messages, Methods: POST
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /v1/messages/count_tokens, Methods: POST
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /generative_scoring, Methods: POST
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /scale_elastic_ep, Methods: POST
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /is_scaling_elastic_ep, Methods: POST
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /v1/chat/completions/render, Methods: POST
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /v1/completions/render, Methods: POST
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /v1/chat/completions/derender, Methods: POST
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /v1/completions/derender, Methods: POST
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /inference/v1/generate, Methods: POST
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /v1/chat/completions, Methods: POST
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /v1/audio/speech, Methods: POST
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /v1/audio/speech/batch, Methods: POST
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /v1/audio/generate, Methods: POST
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /v1/audio/voices, Methods: GET
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /v1/audio/voices, Methods: POST
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /v1/audio/voices/{name}, Methods: DELETE
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /health, Methods: GET
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /v1/models, Methods: GET
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /v1/images/generations, Methods: POST
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /v1/images/edits, Methods: POST
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /v1/videos, Methods: POST
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /v1/videos/sync, Methods: POST
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /v1/videos, Methods: GET
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /v1/videos/{video_id}, Methods: GET
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /v1/videos/{video_id}, Methods: DELETE
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /v1/videos/{video_id}/content, Methods: GET
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /v1/omni/sleep, Methods: POST
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /v1/omni/wakeup, Methods: POST
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:46] Route: /v1/chat/completions/batch, Methods: POST
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:57] Route: /v1/audio/speech/stream, Endpoint: streaming_speech
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:57] Route: /v1/video/chat/stream, Endpoint: streaming_video_chat
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:57] Route: /v1/realtime/video, Endpoint: streaming_video_output
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:57] Route: /v1/realtime, Endpoint: realtime_websocket
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:57] Route: /v1/realtime/robot/openpi, Endpoint: realtime_robot_openpi
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:13 [launcher.py:57] Route: /v1/duplex, Endpoint: duplex_websocket
+[0;36m(APIServer pid=3825906)[0;0m INFO:     Started server process [3825906]
+[0;36m(APIServer pid=3825906)[0;0m INFO:     Waiting for application startup.
+[0;36m(APIServer pid=3825906)[0;0m INFO:     Application startup complete.
+[0;36m(APIServer pid=3825906)[0;0m INFO:     127.0.0.1:38040 - "GET /health HTTP/1.1" 200 OK
+[32mINFO[0m [90m09-19 03:04:14[0m [90m[pipeline_diffusers_adapter.py:392][0m Calling diffusers pipeline with kwargs: {'prompt': 'A man stan... and pans.', 'generator': 'Generator with seed 42 on device cuda:0', 'height': 1024, 'width': 1024, 'num_inference_steps': 20, 'guidance_scale': 1.0, 'eta': 0.0, 'output_type': 'pil', 'num_images_per_prompt': 1}
+  0%|          | 0/20 [00:00<?, ?it/s] 10%|█         | 2/20 [00:00<00:01, 10.53it/s] 20%|██        | 4/20 [00:00<00:01, 10.61it/s] 30%|███       | 6/20 [00:00<00:01, 10.66it/s] 40%|████      | 8/20 [00:00<00:01, 10.69it/s] 50%|█████     | 10/20 [00:00<00:00, 10.72it/s] 60%|██████    | 12/20 [00:01<00:00, 10.73it/s] 70%|███████   | 14/20 [00:01<00:00, 10.72it/s] 80%|████████  | 16/20 [00:01<00:00, 10.73it/s] 90%|█████████ | 18/20 [00:01<00:00, 10.74it/s]100%|██████████| 20/20 [00:01<00:00, 10.75it/s]100%|██████████| 20/20 [00:01<00:00, 10.71it/s]
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:16 [stats.py:765] 
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:16 [stats.py:765] [Overall Summary]
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:16 [stats.py:765] +-----------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:16 [stats.py:765] | Field                       |     Value |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:16 [stats.py:765] +-----------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:16 [stats.py:765] | e2e_requests                |         1 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:16 [stats.py:765] | e2e_wall_time_ms            | 2,376.227 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:16 [stats.py:765] | e2e_avg_time_per_request_ms | 2,376.227 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:16 [stats.py:765] | e2e_stage_0_wall_time_ms    | 2,373.650 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:16 [stats.py:765] +-----------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:16 [stats.py:791] 
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:16 [stats.py:791] [RequestE2EStats [request_id=img_gen-884e7e4e43ddff44-9f0a994d]]
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:16 [stats.py:791] +--------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:16 [stats.py:791] | Field        |     Value |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:16 [stats.py:791] +--------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:16 [stats.py:791] | e2e_total_ms | 2,373.650 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:16 [stats.py:791] +--------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:16 [stats.py:832] [OmniTiming] req=img_gen-884e7e4e43ddff44-9f0a994d total=2.37s engine=2.37s stages=[0:2.37s]
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:16 [stats.py:874] 
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:16 [stats.py:874] [StageRequestStats [request_id=img_gen-884e7e4e43ddff44-9f0a994d]]
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:16 [stats.py:874] +---------------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:16 [stats.py:874] | Field                           |         0 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:16 [stats.py:874] +---------------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:16 [stats.py:874] | batch_id                        |         1 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:16 [stats.py:874] | batch_size                      |         1 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:16 [stats.py:874] | denoise_step_latency_ms         |   118.626 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:16 [stats.py:874] | image_pixels                    | 1,048,576 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:16 [stats.py:874] | inter_output_latencies_ms       |           |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:16 [stats.py:874] | output_unit_count               |         1 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:16 [stats.py:874] | output_unit_type                |     image |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:16 [stats.py:874] | serving_time_to_first_output_ms | 2,375.213 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:16 [stats.py:874] | stage_gen_time_ms               | 2,372.528 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:16 [stats.py:874] | vllm_itls_ms                    |           |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:16 [stats.py:874] +---------------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO:     127.0.0.1:38050 - "POST /v1/images/generations HTTP/1.1" 200 OK
+[32mINFO[0m [90m09-19 03:04:16[0m [90m[pipeline_diffusers_adapter.py:392][0m Calling diffusers pipeline with kwargs: {'prompt': 'A man stan... and pans.', 'generator': 'Generator with seed 42 on device cuda:0', 'height': 1024, 'width': 1024, 'num_inference_steps': 20, 'guidance_scale': 1.0, 'eta': 0.0, 'output_type': 'pil', 'num_images_per_prompt': 1}
+  0%|          | 0/20 [00:00<?, ?it/s] 10%|█         | 2/20 [00:00<00:01, 10.82it/s] 20%|██        | 4/20 [00:00<00:01, 10.82it/s] 30%|███       | 6/20 [00:00<00:01, 10.85it/s] 40%|████      | 8/20 [00:00<00:01, 10.88it/s] 50%|█████     | 10/20 [00:00<00:00, 10.87it/s] 60%|██████    | 12/20 [00:01<00:00, 10.86it/s] 70%|███████   | 14/20 [00:01<00:00, 10.86it/s] 80%|████████  | 16/20 [00:01<00:00, 10.84it/s] 90%|█████████ | 18/20 [00:01<00:00, 10.84it/s]100%|██████████| 20/20 [00:01<00:00, 10.85it/s]100%|██████████| 20/20 [00:01<00:00, 10.85it/s]
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:19 [stats.py:765] 
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:19 [stats.py:765] [Overall Summary]
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:19 [stats.py:765] +-----------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:19 [stats.py:765] | Field                       |     Value |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:19 [stats.py:765] +-----------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:19 [stats.py:765] | e2e_requests                |         1 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:19 [stats.py:765] | e2e_wall_time_ms            | 2,337.459 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:19 [stats.py:765] | e2e_avg_time_per_request_ms | 2,337.459 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:19 [stats.py:765] | e2e_stage_0_wall_time_ms    | 2,336.822 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:19 [stats.py:765] +-----------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:19 [stats.py:791] 
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:19 [stats.py:791] [RequestE2EStats [request_id=img_gen-836ccaac0d60be25-b5643f70]]
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:19 [stats.py:791] +--------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:19 [stats.py:791] | Field        |     Value |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:19 [stats.py:791] +--------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:19 [stats.py:791] | e2e_total_ms | 2,336.822 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:19 [stats.py:791] +--------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:19 [stats.py:832] [OmniTiming] req=img_gen-836ccaac0d60be25-b5643f70 total=2.34s engine=2.34s stages=[0:2.34s]
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:19 [stats.py:874] 
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:19 [stats.py:874] [StageRequestStats [request_id=img_gen-836ccaac0d60be25-b5643f70]]
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:19 [stats.py:874] +---------------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:19 [stats.py:874] | Field                           |         0 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:19 [stats.py:874] +---------------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:19 [stats.py:874] | batch_id                        |         2 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:19 [stats.py:874] | batch_size                      |         1 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:19 [stats.py:874] | denoise_step_latency_ms         |   116.811 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:19 [stats.py:874] | image_pixels                    | 1,048,576 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:19 [stats.py:874] | inter_output_latencies_ms       |           |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:19 [stats.py:874] | output_unit_count               |         1 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:19 [stats.py:874] | output_unit_type                |     image |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:19 [stats.py:874] | serving_time_to_first_output_ms | 2,336.951 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:19 [stats.py:874] | stage_gen_time_ms               | 2,336.224 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:19 [stats.py:874] | vllm_itls_ms                    |           |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:19 [stats.py:874] +---------------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO:     127.0.0.1:38050 - "POST /v1/images/generations HTTP/1.1" 200 OK
+[32mINFO[0m [90m09-19 03:04:19[0m [90m[pipeline_diffusers_adapter.py:392][0m Calling diffusers pipeline with kwargs: {'prompt': 'people sit...video game', 'generator': 'Generator with seed 42 on device cuda:0', 'height': 1024, 'width': 1024, 'num_inference_steps': 20, 'guidance_scale': 1.0, 'eta': 0.0, 'output_type': 'pil', 'num_images_per_prompt': 1}
+  0%|          | 0/20 [00:00<?, ?it/s] 10%|█         | 2/20 [00:00<00:01, 10.73it/s] 20%|██        | 4/20 [00:00<00:01, 10.79it/s] 30%|███       | 6/20 [00:00<00:01, 10.81it/s] 40%|████      | 8/20 [00:00<00:01, 10.82it/s] 50%|█████     | 10/20 [00:00<00:00, 10.84it/s] 60%|██████    | 12/20 [00:01<00:00, 10.84it/s] 70%|███████   | 14/20 [00:01<00:00, 10.84it/s] 80%|████████  | 16/20 [00:01<00:00, 10.84it/s] 90%|█████████ | 18/20 [00:01<00:00, 10.84it/s]100%|██████████| 20/20 [00:01<00:00, 10.84it/s]100%|██████████| 20/20 [00:01<00:00, 10.83it/s]
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:21 [stats.py:765] 
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:21 [stats.py:765] [Overall Summary]
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:21 [stats.py:765] +-----------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:21 [stats.py:765] | Field                       |     Value |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:21 [stats.py:765] +-----------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:21 [stats.py:765] | e2e_requests                |         1 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:21 [stats.py:765] | e2e_wall_time_ms            | 2,341.875 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:21 [stats.py:765] | e2e_avg_time_per_request_ms | 2,341.875 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:21 [stats.py:765] | e2e_stage_0_wall_time_ms    | 2,341.184 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:21 [stats.py:765] +-----------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:21 [stats.py:791] 
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:21 [stats.py:791] [RequestE2EStats [request_id=img_gen-87d21514a099b154-97bc4c37]]
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:21 [stats.py:791] +--------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:21 [stats.py:791] | Field        |     Value |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:21 [stats.py:791] +--------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:21 [stats.py:791] | e2e_total_ms | 2,341.184 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:21 [stats.py:791] +--------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:21 [stats.py:832] [OmniTiming] req=img_gen-87d21514a099b154-97bc4c37 total=2.34s engine=2.34s stages=[0:2.34s]
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:21 [stats.py:874] 
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:21 [stats.py:874] [StageRequestStats [request_id=img_gen-87d21514a099b154-97bc4c37]]
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:21 [stats.py:874] +---------------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:21 [stats.py:874] | Field                           |         0 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:21 [stats.py:874] +---------------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:21 [stats.py:874] | batch_id                        |         3 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:21 [stats.py:874] | batch_size                      |         1 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:21 [stats.py:874] | denoise_step_latency_ms         |   117.015 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:21 [stats.py:874] | image_pixels                    | 1,048,576 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:21 [stats.py:874] | inter_output_latencies_ms       |           |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:21 [stats.py:874] | output_unit_count               |         1 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:21 [stats.py:874] | output_unit_type                |     image |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:21 [stats.py:874] | serving_time_to_first_output_ms | 2,341.125 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:21 [stats.py:874] | stage_gen_time_ms               | 2,340.298 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:21 [stats.py:874] | vllm_itls_ms                    |           |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:21 [stats.py:874] +---------------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO:     127.0.0.1:48728 - "POST /v1/images/generations HTTP/1.1" 200 OK
+[32mINFO[0m [90m09-19 03:04:21[0m [90m[pipeline_diffusers_adapter.py:392][0m Calling diffusers pipeline with kwargs: {'prompt': 'A man stan... and pans.', 'generator': 'Generator with seed 43 on device cuda:0', 'height': 1024, 'width': 1024, 'num_inference_steps': 20, 'guidance_scale': 1.0, 'eta': 0.0, 'output_type': 'pil', 'num_images_per_prompt': 1}
+  0%|          | 0/20 [00:00<?, ?it/s] 10%|█         | 2/20 [00:00<00:01, 10.87it/s] 20%|██        | 4/20 [00:00<00:01, 10.90it/s] 30%|███       | 6/20 [00:00<00:01, 10.90it/s] 40%|████      | 8/20 [00:00<00:01, 10.90it/s] 50%|█████     | 10/20 [00:00<00:00, 10.92it/s] 60%|██████    | 12/20 [00:01<00:00, 10.84it/s] 70%|███████   | 14/20 [00:01<00:00, 10.83it/s] 80%|████████  | 16/20 [00:01<00:00, 10.83it/s] 90%|█████████ | 18/20 [00:01<00:00, 10.84it/s]100%|██████████| 20/20 [00:01<00:00, 10.85it/s]100%|██████████| 20/20 [00:01<00:00, 10.86it/s]
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:23 [stats.py:765] 
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:23 [stats.py:765] [Overall Summary]
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:23 [stats.py:765] +-----------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:23 [stats.py:765] | Field                       |     Value |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:23 [stats.py:765] +-----------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:23 [stats.py:765] | e2e_requests                |         1 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:23 [stats.py:765] | e2e_wall_time_ms            | 2,339.700 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:23 [stats.py:765] | e2e_avg_time_per_request_ms | 2,339.700 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:23 [stats.py:765] | e2e_stage_0_wall_time_ms    | 2,339.132 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:23 [stats.py:765] +-----------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:23 [stats.py:791] 
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:23 [stats.py:791] [RequestE2EStats [request_id=img_gen-9df81f663d652dde-b87f7929]]
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:23 [stats.py:791] +--------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:23 [stats.py:791] | Field        |     Value |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:23 [stats.py:791] +--------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:23 [stats.py:791] | e2e_total_ms | 2,339.132 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:23 [stats.py:791] +--------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:23 [stats.py:832] [OmniTiming] req=img_gen-9df81f663d652dde-b87f7929 total=2.34s engine=2.34s stages=[0:2.34s]
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:23 [stats.py:874] 
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:23 [stats.py:874] [StageRequestStats [request_id=img_gen-9df81f663d652dde-b87f7929]]
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:23 [stats.py:874] +---------------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:23 [stats.py:874] | Field                           |         0 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:23 [stats.py:874] +---------------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:23 [stats.py:874] | batch_id                        |         4 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:23 [stats.py:874] | batch_size                      |         1 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:23 [stats.py:874] | denoise_step_latency_ms         |   116.923 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:23 [stats.py:874] | image_pixels                    | 1,048,576 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:23 [stats.py:874] | inter_output_latencies_ms       |           |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:23 [stats.py:874] | output_unit_count               |         1 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:23 [stats.py:874] | output_unit_type                |     image |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:23 [stats.py:874] | serving_time_to_first_output_ms | 2,339.142 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:23 [stats.py:874] | stage_gen_time_ms               | 2,338.463 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:23 [stats.py:874] | vllm_itls_ms                    |           |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:23 [stats.py:874] +---------------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO:     127.0.0.1:48728 - "POST /v1/images/generations HTTP/1.1" 200 OK
+[32mINFO[0m [90m09-19 03:04:23[0m [90m[pipeline_diffusers_adapter.py:392][0m Calling diffusers pipeline with kwargs: {'prompt': 'Wide angle...y players.', 'generator': 'Generator with seed 44 on device cuda:0', 'height': 1024, 'width': 1024, 'num_inference_steps': 20, 'guidance_scale': 1.0, 'eta': 0.0, 'output_type': 'pil', 'num_images_per_prompt': 1}
+  0%|          | 0/20 [00:00<?, ?it/s] 10%|█         | 2/20 [00:00<00:01, 10.80it/s] 20%|██        | 4/20 [00:00<00:01, 10.86it/s] 30%|███       | 6/20 [00:00<00:01, 10.88it/s] 40%|████      | 8/20 [00:00<00:01, 10.89it/s] 50%|█████     | 10/20 [00:00<00:00, 10.91it/s] 60%|██████    | 12/20 [00:01<00:00, 10.90it/s] 70%|███████   | 14/20 [00:01<00:00, 10.88it/s] 80%|████████  | 16/20 [00:01<00:00, 10.87it/s] 90%|█████████ | 18/20 [00:01<00:00, 10.86it/s]100%|██████████| 20/20 [00:01<00:00, 10.85it/s]100%|██████████| 20/20 [00:01<00:00, 10.87it/s]
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:26 [stats.py:765] 
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:26 [stats.py:765] [Overall Summary]
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:26 [stats.py:765] +-----------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:26 [stats.py:765] | Field                       |     Value |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:26 [stats.py:765] +-----------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:26 [stats.py:765] | e2e_requests                |         1 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:26 [stats.py:765] | e2e_wall_time_ms            | 2,333.473 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:26 [stats.py:765] | e2e_avg_time_per_request_ms | 2,333.473 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:26 [stats.py:765] | e2e_stage_0_wall_time_ms    | 2,332.935 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:26 [stats.py:765] +-----------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:26 [stats.py:791] 
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:26 [stats.py:791] [RequestE2EStats [request_id=img_gen-9d091953cfac62aa-af6ca121]]
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:26 [stats.py:791] +--------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:26 [stats.py:791] | Field        |     Value |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:26 [stats.py:791] +--------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:26 [stats.py:791] | e2e_total_ms | 2,332.935 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:26 [stats.py:791] +--------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:26 [stats.py:832] [OmniTiming] req=img_gen-9d091953cfac62aa-af6ca121 total=2.33s engine=2.33s stages=[0:2.33s]
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:26 [stats.py:874] 
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:26 [stats.py:874] [StageRequestStats [request_id=img_gen-9d091953cfac62aa-af6ca121]]
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:26 [stats.py:874] +---------------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:26 [stats.py:874] | Field                           |         0 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:26 [stats.py:874] +---------------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:26 [stats.py:874] | batch_id                        |         5 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:26 [stats.py:874] | batch_size                      |         1 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:26 [stats.py:874] | denoise_step_latency_ms         |   116.618 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:26 [stats.py:874] | image_pixels                    | 1,048,576 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:26 [stats.py:874] | inter_output_latencies_ms       |           |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:26 [stats.py:874] | output_unit_count               |         1 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:26 [stats.py:874] | output_unit_type                |     image |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:26 [stats.py:874] | serving_time_to_first_output_ms | 2,333.000 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:26 [stats.py:874] | stage_gen_time_ms               | 2,332.367 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:26 [stats.py:874] | vllm_itls_ms                    |           |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:26 [stats.py:874] +---------------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO:     127.0.0.1:48728 - "POST /v1/images/generations HTTP/1.1" 200 OK
+[32mINFO[0m [90m09-19 03:04:26[0m [90m[pipeline_diffusers_adapter.py:392][0m Calling diffusers pipeline with kwargs: {'prompt': 'A stack co...martphone.', 'generator': 'Generator with seed 45 on device cuda:0', 'height': 1024, 'width': 1024, 'num_inference_steps': 20, 'guidance_scale': 1.0, 'eta': 0.0, 'output_type': 'pil', 'num_images_per_prompt': 1}
+  0%|          | 0/20 [00:00<?, ?it/s] 10%|█         | 2/20 [00:00<00:01, 10.86it/s] 20%|██        | 4/20 [00:00<00:01, 10.87it/s] 30%|███       | 6/20 [00:00<00:01, 10.87it/s] 40%|████      | 8/20 [00:00<00:01, 10.90it/s] 50%|█████     | 10/20 [00:00<00:00, 10.91it/s] 60%|██████    | 12/20 [00:01<00:00, 10.89it/s] 70%|███████   | 14/20 [00:01<00:00, 10.89it/s] 80%|████████  | 16/20 [00:01<00:00, 10.88it/s] 90%|█████████ | 18/20 [00:01<00:00, 10.88it/s]100%|██████████| 20/20 [00:01<00:00, 10.89it/s]100%|██████████| 20/20 [00:01<00:00, 10.88it/s]
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:28 [stats.py:765] 
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:28 [stats.py:765] [Overall Summary]
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:28 [stats.py:765] +-----------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:28 [stats.py:765] | Field                       |     Value |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:28 [stats.py:765] +-----------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:28 [stats.py:765] | e2e_requests                |         1 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:28 [stats.py:765] | e2e_wall_time_ms            | 2,330.669 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:28 [stats.py:765] | e2e_avg_time_per_request_ms | 2,330.669 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:28 [stats.py:765] | e2e_stage_0_wall_time_ms    | 2,330.142 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:28 [stats.py:765] +-----------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:28 [stats.py:791] 
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:28 [stats.py:791] [RequestE2EStats [request_id=img_gen-8973c047e99e2026-ad65ea09]]
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:28 [stats.py:791] +--------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:28 [stats.py:791] | Field        |     Value |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:28 [stats.py:791] +--------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:28 [stats.py:791] | e2e_total_ms | 2,330.142 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:28 [stats.py:791] +--------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:28 [stats.py:832] [OmniTiming] req=img_gen-8973c047e99e2026-ad65ea09 total=2.33s engine=2.33s stages=[0:2.33s]
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:28 [stats.py:874] 
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:28 [stats.py:874] [StageRequestStats [request_id=img_gen-8973c047e99e2026-ad65ea09]]
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:28 [stats.py:874] +---------------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:28 [stats.py:874] | Field                           |         0 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:28 [stats.py:874] +---------------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:28 [stats.py:874] | batch_id                        |         6 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:28 [stats.py:874] | batch_size                      |         1 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:28 [stats.py:874] | denoise_step_latency_ms         |   116.493 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:28 [stats.py:874] | image_pixels                    | 1,048,576 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:28 [stats.py:874] | inter_output_latencies_ms       |           |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:28 [stats.py:874] | output_unit_count               |         1 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:28 [stats.py:874] | output_unit_type                |     image |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:28 [stats.py:874] | serving_time_to_first_output_ms | 2,330.501 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:28 [stats.py:874] | stage_gen_time_ms               | 2,329.857 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:28 [stats.py:874] | vllm_itls_ms                    |           |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:28 [stats.py:874] +---------------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO:     127.0.0.1:48728 - "POST /v1/images/generations HTTP/1.1" 200 OK
+[32mINFO[0m [90m09-19 03:04:28[0m [90m[pipeline_diffusers_adapter.py:392][0m Calling diffusers pipeline with kwargs: {'prompt': 'This large...ato sauce.', 'generator': 'Generator with seed 46 on device cuda:0', 'height': 1024, 'width': 1024, 'num_inference_steps': 20, 'guidance_scale': 1.0, 'eta': 0.0, 'output_type': 'pil', 'num_images_per_prompt': 1}
+  0%|          | 0/20 [00:00<?, ?it/s] 10%|█         | 2/20 [00:00<00:01, 10.83it/s] 20%|██        | 4/20 [00:00<00:01, 10.86it/s] 30%|███       | 6/20 [00:00<00:01, 10.85it/s] 40%|████      | 8/20 [00:00<00:01, 10.86it/s] 50%|█████     | 10/20 [00:00<00:00, 10.87it/s] 60%|██████    | 12/20 [00:01<00:00, 10.84it/s] 70%|███████   | 14/20 [00:01<00:00, 10.84it/s] 80%|████████  | 16/20 [00:01<00:00, 10.84it/s] 90%|█████████ | 18/20 [00:01<00:00, 10.85it/s]100%|██████████| 20/20 [00:01<00:00, 10.84it/s]100%|██████████| 20/20 [00:01<00:00, 10.85it/s]
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:30 [stats.py:765] 
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:30 [stats.py:765] [Overall Summary]
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:30 [stats.py:765] +-----------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:30 [stats.py:765] | Field                       |     Value |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:30 [stats.py:765] +-----------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:30 [stats.py:765] | e2e_requests                |         1 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:30 [stats.py:765] | e2e_wall_time_ms            | 2,338.785 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:30 [stats.py:765] | e2e_avg_time_per_request_ms | 2,338.785 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:30 [stats.py:765] | e2e_stage_0_wall_time_ms    | 2,338.264 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:30 [stats.py:765] +-----------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:30 [stats.py:791] 
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:30 [stats.py:791] [RequestE2EStats [request_id=img_gen-a3236ab4786f1946-a804c2e2]]
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:30 [stats.py:791] +--------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:30 [stats.py:791] | Field        |     Value |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:30 [stats.py:791] +--------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:30 [stats.py:791] | e2e_total_ms | 2,338.264 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:30 [stats.py:791] +--------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:30 [stats.py:832] [OmniTiming] req=img_gen-a3236ab4786f1946-a804c2e2 total=2.34s engine=2.34s stages=[0:2.34s]
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:30 [stats.py:874] 
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:30 [stats.py:874] [StageRequestStats [request_id=img_gen-a3236ab4786f1946-a804c2e2]]
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:30 [stats.py:874] +---------------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:30 [stats.py:874] | Field                           |         0 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:30 [stats.py:874] +---------------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:30 [stats.py:874] | batch_id                        |         7 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:30 [stats.py:874] | batch_size                      |         1 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:30 [stats.py:874] | denoise_step_latency_ms         |   116.882 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:30 [stats.py:874] | image_pixels                    | 1,048,576 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:30 [stats.py:874] | inter_output_latencies_ms       |           |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:30 [stats.py:874] | output_unit_count               |         1 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:30 [stats.py:874] | output_unit_type                |     image |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:30 [stats.py:874] | serving_time_to_first_output_ms | 2,338.238 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:30 [stats.py:874] | stage_gen_time_ms               | 2,337.646 |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:30 [stats.py:874] | vllm_itls_ms                    |           |
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:30 [stats.py:874] +---------------------------------+-----------+
+[0;36m(APIServer pid=3825906)[0;0m INFO:     127.0.0.1:48728 - "POST /v1/images/generations HTTP/1.1" 200 OK
+[32mINFO[0m [90m09-19 03:04:35[0m [90m[pipeline_diffusers_adapter.py:392][0m Calling diffusers pipeline with kwargs: {'prompt': 'people sit...video game', 'generator': 'Generator with seed 42 on device cuda:0', 'height': 1024, 'width': 1024, 'num_inference_steps': 20, 'guidance_scale': 1.0, 'eta': 0.0, 'output_type': 'pil', 'num_images_per_prompt': 1}
+  0%|          | 0/20 [00:00<?, ?it/s][0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:36 [async_omni.py:1074] [AsyncOmni] Aborted request(s) img_gen-9dadb205c1872bdd-8720d487
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:36 [orchestrator.py:783] [Orchestrator] Aborted request(s) ['img_gen-9dadb205c1872bdd-8720d487']
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:36 [async_omni.py:645] [AsyncOmni] Request img_gen-9dadb205c1872bdd-8720d487 aborted.
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:36 [launcher.py:100] [shutdown] API server: shutdown triggered
+  0%|          | 0/20 [00:00<?, ?it/s]
+[32mINFO[0m [90m09-19 03:04:36[0m [90m[diffusion_worker.py:1194][0m Worker 0: Shutdown signal received, starting cleanup.
+[0;36m(APIServer pid=3825906)[0;0m INFO:     Shutting down
+[0;36m(APIServer pid=3825906)[0;0m INFO:     Waiting for application shutdown.
+[0;36m(APIServer pid=3825906)[0;0m INFO:     Application shutdown complete.
+[0;36m(APIServer pid=3825906)[0;0m INFO:     Finished server process [3825906]
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:36 [omni_base.py:630] [AsyncOmni] Shutting down
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:36 [async_omni_engine.py:1827] [AsyncOmniEngine] Shutting down Orchestrator
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:36 [orchestrator.py:612] [Orchestrator] Received shutdown signal
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:36 [orchestrator.py:2258] [Orchestrator] Shutting down all 1 client(s)
+[0;36m(APIServer pid=3825906)[0;0m ERROR 09-19 03:04:37 [multiproc_executor.py:355] Diffusion worker(s) died unexpectedly: ['DiffusionWorker-0(exitcode=None)']
+[0;36m(APIServer pid=3825906)[0;0m ERROR 09-19 03:04:37 [inline_stage_diffusion_client.py:87] [InlineStageDiffusionClient] stage-0 [rep-0] diffusion executor died unexpectedly.
+[0;36m(APIServer pid=3825906)[0;0m INFO 09-19 03:04:37 [stage_pool.py:1237] [StagePool] Stage 0 replica 0 shut down
+/usr/lib/python3.12/multiprocessing/resource_tracker.py:254: UserWarning: resource_tracker: There appear to be 1 leaked shared_memory objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '
