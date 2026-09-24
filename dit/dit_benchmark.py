@@ -35,65 +35,29 @@ Timing:
 """
 
 import argparse
-import os
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
 
-MODELS = [
-    "Efficient-Large-Model/Sana_600M_1024px_diffusers",
-    "Efficient-Large-Model/Sana_1600M_1024px_diffusers",
-    "PixArt-alpha/PixArt-Sigma-XL-2-1024-MS",
-    "stabilityai/stable-diffusion-3.5-medium",
-    "stabilityai/stable-diffusion-3.5-large",
-]
+# Run as a file (python dit/dit_benchmark.py, or an IDE's run button) rather
+# than as a module (python -m dit.dit_benchmark): put the repository root on
+# sys.path so the common/ and dit/ packages resolve either way.
+if not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-# Models that need something beyond `pip install -r requirements.txt` before
-# they will load. Checked up front so the failure is actionable instead of a
-# stack trace from deep inside diffusers.
-GATED = {
-    "stabilityai/stable-diffusion-3.5-medium",
-    "stabilityai/stable-diffusion-3.5-large",
-}
+# First: importing common.paths sets HF_HUB_CACHE, which huggingface_hub and
+# diffusers read at import time.
+from common.paths import DATASET_DIR, HF_HUB_CACHE_DIR, MODELS_DIR, OUTPUT_ROOT
+from dit.catalog import MODELS, UNSUPPORTED, load_prompts
 
-UNSUPPORTED = {
-    "OmniGen2/OmniGen2": (
-        "OmniGen2's model_index.json declares _class_name=OmniGen2Pipeline, but that "
-        "class does not exist in any released diffusers (checked 0.39.0 and 0.40.0) "
-        "nor on diffusers main, and the model repo ships only a custom transformer "
-        "and scheduler - no pipeline. Running it requires the upstream package from "
-        "github.com/VectorSpaceLab/OmniGen2, which pins torch 2.6.0 and would "
-        "conflict with this environment (torch 2.13). Install it in a separate venv "
-        "and benchmark it there."
-    ),
-}
-
-BASE_DIR = Path(__file__).resolve().parent
-DATASET_DIR = BASE_DIR / "dataset"
-MODELS_DIR = BASE_DIR / "models"
-# Results are filed per machine, since several boxes feed this repo and a run
-# is only comparable if you know which one produced it. Override when running
-# elsewhere: BENCH_OUTPUT_ROOT=output_SR630_6740_L4 python dit_benchmark.py
-OUTPUT_ROOT = Path(os.environ.get("BENCH_OUTPUT_ROOT",
-                                  BASE_DIR / "output_SR650a_6787P_RTX6000"))
 OUTPUT_DIR = OUTPUT_ROOT / "dit_output"
-HF_HUB_CACHE_DIR = BASE_DIR / "hf_hub_cache"
-
-# Must be set before huggingface_hub/diffusers are imported: they read
-# HF_HUB_CACHE at import time to compute cache paths. Without this, raw
-# downloaded blobs land in ~/.cache/huggingface instead of this project, even
-# though cache_dir= is passed to from_pretrained/hf_hub_download below.
-os.environ.setdefault("HF_HUB_CACHE", str(HF_HUB_CACHE_DIR))
 
 import torch
 from diffusers import DiffusionPipeline
-from huggingface_hub import hf_hub_download
 from huggingface_hub.errors import GatedRepoError
 
-import hostinfo
-import quantize
-import resources
-import sweep
+from common import hostinfo, quantize, resources, sweep
 
 
 def parse_args():
@@ -233,19 +197,6 @@ def sync(device):
         torch.cuda.synchronize()
 
 
-def load_prompts(n):
-    prompt_file = hf_hub_download(
-        repo_id="byliutao/coco2014val_10k",
-        repo_type="dataset",
-        filename="test.txt",
-        cache_dir=str(DATASET_DIR),
-    )
-    with open(prompt_file, "r", encoding="utf-8") as f:
-        prompts = [line.strip() for line in f if line.strip()]
-    return prompts[:n]
-
-
-
 # ---------------------------------------------------------------------------
 # Offline throughput sweep
 #
@@ -312,7 +263,7 @@ def _dit_replica(conn, cfg, prompts):
     # visible artefacts.
     quantised = skipped = 0
     if cfg["quant"] != "none":
-        import quantize as _quantize
+        from common import quantize as _quantize
         _quantize.apply(pipe.transformer, cfg["quant"])
         quantised, skipped = _quantize.count(pipe.transformer)
 
@@ -710,10 +661,8 @@ def main():
     if not args.throughput:
         log(f"Model      : {args.model}")
     log(f"Device     : {args.device}")
-    log(f"Server     : {hostinfo.server_sku()}")
-    log(f"CPU        : {hostinfo.cpu_sku()}")
-    log(f"CPU cores  : {hostinfo.cpu_topology()}")
-    log(f"GPU        : {hostinfo.gpu_sku()}")
+    for line in hostinfo.header_lines():
+        log(line)
     if not args.throughput:
         log(f"Dtype      : {args.dtype}")
     log(f"Samples    : {args.samples}")

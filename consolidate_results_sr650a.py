@@ -76,20 +76,17 @@ on the hardware being right.
 
 import csv
 import functools
-import os
 import re
 from collections import defaultdict
-from pathlib import Path
 
-import hostinfo
+from common import hostinfo
+from common.paths import OUTPUT_ROOT
 
-BASE_DIR = Path(__file__).resolve().parent
-# One results tree per machine, matching the benchmark scripts. Everything
-# under it is scanned recursively, so the per-script subfolders (vit_output,
-# dit_output, server_vit_output, server_dit_output, diag_output) need no
-# enumerating here - a new one is picked up as soon as it has files in it.
-OUTPUT_ROOT = Path(os.environ.get("BENCH_OUTPUT_ROOT",
-                                  BASE_DIR / "output_SR650a_6787P_RTX6000"))
+# OUTPUT_ROOT is the one results tree per machine the benchmark scripts write
+# to (BENCH_OUTPUT_ROOT overrides it). Everything under it is scanned
+# recursively, so the per-script subfolders (vit_output, dit_output,
+# server_vit_output, server_dit_output, diag_output) need no enumerating here
+# - a new one is picked up as soon as it has files in it.
 CSV_PATH = OUTPUT_ROOT / "consolidated_results_SR650a.csv"
 CELLS_CSV_PATH = OUTPUT_ROOT / "consolidated_sweep_cells_SR650a.csv"
 
@@ -955,7 +952,8 @@ def main():
                 and not rec.get("skipped_reason") \
                 and rec.get("verdict", "") != "SLA unmet at every level tried":
             print(f"  warning: no sweep cell matches the reported result: {rec['file']}")
-        if rec["script"] != "vit_benchmark" and not rec["cells"] \
+        if rec["script"] not in ("vit_benchmark", "diag_vit_inference") \
+                and not rec["cells"] \
                 and not rec.get("skipped_reason"):
             print(f"  warning: no sweep table parsed: {rec['file']}")
 

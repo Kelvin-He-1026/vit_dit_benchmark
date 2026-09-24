@@ -6,11 +6,11 @@
 # box-wide, so two runs at once would contaminate each other's numbers.
 #
 # Usage
-#   ./run_server_dit_sweep.sh plan          list every run and whether it is done
-#   ./run_server_dit_sweep.sh run           run everything not yet done (foreground)
-#   ./run_server_dit_sweep.sh start         same, detached with nohup; survives logout
-#   ./run_server_dit_sweep.sh status        what is running now, progress, last results
-#   ./run_server_dit_sweep.sh stop          stop the detached sweep and its current run
+#   dit/run_server_dit_sweep.sh plan        list every run and whether it is done
+#   dit/run_server_dit_sweep.sh run         run everything not yet done (foreground)
+#   dit/run_server_dit_sweep.sh start       same, detached with nohup; survives logout
+#   dit/run_server_dit_sweep.sh status      what is running now, progress, last results
+#   dit/run_server_dit_sweep.sh stop        stop the detached sweep and its current run
 #
 # Filters (environment variables, space separated):
 #   CONFIGS="gpu1 gpu2 cpu1s cpu2s cpu4n"
@@ -28,7 +28,10 @@
 
 set -uo pipefail
 
-cd "$(dirname "$(readlink -f "$0")")"
+# Resolved before the cd, so `start` can re-launch this script however it was
+# invoked. Everything below runs from the repository root, one level up.
+SELF=$(readlink -f "$0")
+cd "$(dirname "$SELF")/.."
 
 PYTHON=${PYTHON:-cv_env/bin/python}
 OUT_ROOT=${BENCH_OUTPUT_ROOT:-output_SR650a_6787P_RTX6000}
@@ -143,13 +146,13 @@ cmd_run() {
             echo "RUNNING   : [$i/$total] $key"
             echo "started   : $(date '+%F %T')"
             echo "log       : $log"
-            echo "command   : $PYTHON server_dit_benchmark.py --model $model $*"
+            echo "command   : $PYTHON -m dit.server_dit_benchmark --model $model $*"
         } | tee "$STATUS"
         start=$(date +%s)
         # A hung run (e.g. a replica wedged in a CUDA call) must not stall the
         # remaining sweep; timeout exits 124 and the run is recorded as FAILED.
         timeout --kill-after=120 "${RUN_TIMEOUT:-8h}" \
-            "$PYTHON" server_dit_benchmark.py --model "$model" "$@" > "$log" 2>&1
+            "$PYTHON" -m dit.server_dit_benchmark --model "$model" "$@" > "$log" 2>&1
         rc=$?
         secs=$(( $(date +%s) - start ))
         state=OK; [[ $rc -ne 0 ]] && state="FAILED(rc=$rc)"
@@ -163,7 +166,7 @@ cmd_run() {
 cmd_start() {
     local pid
     if pid=$(sweep_pid); then echo "sweep already running (pid $pid)"; exit 1; fi
-    setsid nohup "$0" run > "$SWEEP_DIR/sweep.out" 2>&1 < /dev/null &
+    setsid nohup "$SELF" run > "$SWEEP_DIR/sweep.out" 2>&1 < /dev/null &
     echo $! > "$PIDFILE"
     echo "sweep started in background (pid $!), output in $SWEEP_DIR/sweep.out"
     echo "check progress with: $0 status"
@@ -203,7 +206,7 @@ cmd_stop() {
         # A foreground `run` shares the caller's terminal session, which must
         # not be killed wholesale: stop the loop, then the benchmark it started.
         kill -TERM "$pid"
-        pkill -TERM -f "server_dit_benchmark.py"
+        pkill -TERM -f "dit[./]server_dit_benchmark"
     fi
     rm -f "$PIDFILE"
     echo "stopped sweep (pid $pid); the interrupted run is not marked done"

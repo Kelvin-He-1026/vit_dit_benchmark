@@ -28,9 +28,9 @@ Three parts, each adding one layer back:
 Profilers (install separately: pip install py-spy; nsys ships with Nsight
 Systems). The forward path is wrapped in NVTX ranges so stages line up in nsys:
   py-spy record --gil --native -o gil.svg -- \\
-      python diag_vit_inference.py --parts server --rates 200
+      python -m vit.diag_vit_inference --parts server --rates 200
   nsys profile -t cuda,nvtx,osrt -o diag \\
-      python diag_vit_inference.py --parts server --rates 200 --measure-s 10
+      python -m vit.diag_vit_inference --parts server --rates 200 --measure-s 10
 """
 
 import argparse
@@ -38,12 +38,26 @@ import asyncio
 import io
 import random
 import statistics
+import sys
 import time
 from datetime import datetime
+from pathlib import Path
 
-# Importing sets HF_HUB_CACHE and torch.set_num_threads(2) /
-# set_num_interop_threads(1) at module level, same as the server runs.
-import server_vit_benchmark as svb
+# Run as a file (python vit/diag_vit_inference.py, or an IDE's run button)
+# rather than as a module (python -m vit.diag_vit_inference): put the
+# repository root on sys.path so the common/ and vit/ packages resolve either
+# way.
+if not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+# First: importing common.paths sets HF_HUB_CACHE, which huggingface_hub,
+# datasets and transformers read at import time.
+from common.paths import DATASET_DIR, MODELS_DIR, OUTPUT_ROOT
+from vit.catalog import DATASET_NAME, MODELS
+
+# The server under diagnosis. Importing it also sets torch.set_num_threads(2)
+# / set_num_interop_threads(1) at module level, same as the server runs.
+from vit import server_vit_benchmark as svb
 
 import torch
 from datasets import load_dataset
@@ -51,7 +65,7 @@ from PIL import Image
 from torch.cuda import nvtx
 from transformers import AutoImageProcessor, AutoModel, AutoModelForImageClassification
 
-import hostinfo
+from common import hostinfo, stats
 
 torch.set_num_threads(2)
 # set_num_interop_threads may only be called once per process; the import
@@ -62,7 +76,7 @@ if torch.get_num_interop_threads() != 1:
 
 def parse_args():
     p = argparse.ArgumentParser(description="Split inference_ms into its parts.")
-    p.add_argument("--model", choices=svb.MODELS, default=svb.MODELS[0])
+    p.add_argument("--model", choices=MODELS, default=MODELS[0])
     p.add_argument("--dtype", choices=["float32", "bfloat16"], default="bfloat16")
     p.add_argument("--image-processor", choices=["slow", "fast"], default="fast",
                    help="Only used for the one-time, untimed decode.")
@@ -85,7 +99,7 @@ def ms(seconds):
 
 
 def p50(values):
-    return svb.percentile(values, 50)
+    return stats.percentile(values, 50)
 
 
 def decode_all(processor, payloads):
@@ -338,7 +352,7 @@ def part_server(model, processor, cache, payloads, labels, dtype, is_dino,
         for k, v in res["cols"].items():
             indent = "  " if k in ("e2e", "queue_wait", "inference") else "    "
             log(f"{indent}{k:<{16 - len(indent)}} {ms(p50(v)):>8.2f} "
-                f"{ms(svb.percentile(v, 95)):>8.2f}")
+                f"{ms(stats.percentile(v, 95)):>8.2f}")
         summary.append((rate, res))
 
     log("")
@@ -348,7 +362,7 @@ def part_server(model, processor, cache, payloads, labels, dtype, is_dino,
     for rate, res in summary:
         c = res["cols"]
         log(f"{rate:>6g} {res['mean_batch']:>6.1f} "
-            + " ".join(f"{ms(svb.percentile(c[k], 95)):>7.2f}"
+            + " ".join(f"{ms(stats.percentile(c[k], 95)):>7.2f}"
                        for k in ("e2e", "inference", "cpu_launch", "gpu",
                                  "postback")))
     log("Compare cpu_launch here with PART 2 at the same batch size: the gap is "
@@ -374,10 +388,8 @@ def main():
     log(f"Timestamp  : {timestamp}")
     log(f"Script     : diag_vit_inference")
     log(f"Model      : {args.model}")
-    log(f"Server     : {hostinfo.server_sku()}")
-    log(f"CPU        : {hostinfo.cpu_sku()}")
-    log(f"CPU cores  : {hostinfo.cpu_topology()}")
-    log(f"GPU        : {hostinfo.gpu_sku()}")
+    for line in hostinfo.header_lines():
+        log(line)
     log(f"Dtype      : {args.dtype}")
     log(f"Input      : pre-decoded tensors (no JPEG preprocessing timed)")
     log(f"Pre workers: {args.preprocess_workers}")
@@ -386,10 +398,10 @@ def main():
     log(f"Parts      : {args.parts}")
 
     ds = load_dataset(
-        svb.DATASET_NAME,
+        DATASET_NAME,
         data_files={"validation": "data/validation-*"},
         split="validation",
-        cache_dir=str(svb.DATASET_DIR),
+        cache_dir=str(DATASET_DIR),
         verification_mode="no_checks",
     )
     n_images = min(args.images, len(ds))
@@ -397,11 +409,11 @@ def main():
     payloads, labels = svb.build_payloads([ds[i * stride] for i in range(n_images)])
 
     processor = AutoImageProcessor.from_pretrained(
-        args.model, cache_dir=str(svb.MODELS_DIR),
+        args.model, cache_dir=str(MODELS_DIR),
         use_fast=(args.image_processor == "fast"),
     )
     cls = AutoModel if is_dino else AutoModelForImageClassification
-    model = cls.from_pretrained(args.model, cache_dir=str(svb.MODELS_DIR))
+    model = cls.from_pretrained(args.model, cache_dir=str(MODELS_DIR))
     model = model.to(device="cuda", dtype=dtype).eval()
     cache = decode_all(processor, payloads)
     cpu_tensors = [cache[id(p)] for p in payloads]
@@ -414,7 +426,7 @@ def main():
         part_server(model, processor, cache, payloads, labels, dtype, is_dino,
                     args, log)
 
-    out_dir = svb.OUTPUT_ROOT / "diag_output"
+    out_dir = OUTPUT_ROOT / "diag_output"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"diag_vit_{args.model.replace('/', '_')}_{timestamp}.txt"
     out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")

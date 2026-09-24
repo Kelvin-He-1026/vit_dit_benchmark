@@ -5,7 +5,7 @@ Runs from different machines land in the same output/ directory and the same
 consolidated CSV - an L4 box and an RTX PRO 6000 box are already mixed in
 there - so a result is only comparable if it says which hardware produced it.
 Every benchmark logs these four lines in its header and
-consolidate_results_sr630.py
+consolidate_results_sr650a.py
 lifts them into the server_sku / cpu_sku / gpu_sku / cpu_cores columns,
 and derives the short server / cpu / gpu labels from them.
 
@@ -140,7 +140,7 @@ def gpu_sku(use_torch=True):
     use_torch=True (the benchmarks) asks torch first, because torch honours
     CUDA_VISIBLE_DEVICES and so reports the GPUs the run could actually see -
     which is the honest answer when run_multisocket.py pins a shard to one
-    card. use_torch=False (consolidate_results_sr630.py) goes straight to
+    card. use_torch=False (consolidate_results_sr650a.py) goes straight to
     nvidia-smi, which needs no torch in the environment doing the reading.
     torch is imported lazily either way.
     """
@@ -162,8 +162,16 @@ def gpu_sku(use_torch=True):
     return "unknown"
 
 
+def header_lines(use_torch=True):
+    """The four host lines every benchmark logs, in the layout
+    consolidate_results_sr650a.py parses."""
+    return [
+        f"Server     : {server_sku()}",
+        f"CPU        : {cpu_sku()}",
+        f"CPU cores  : {cpu_topology()}",
+        f"GPU        : {gpu_sku(use_torch=use_torch)}",
+    ]
+
+
 if __name__ == "__main__":
-    print(f"Server     : {server_sku()}")
-    print(f"CPU        : {cpu_sku()}")
-    print(f"CPU cores  : {cpu_topology()}")
-    print(f"GPU        : {gpu_sku()}")
+    print("\n".join(header_lines()))

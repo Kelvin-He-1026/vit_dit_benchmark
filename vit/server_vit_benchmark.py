@@ -103,9 +103,9 @@ CPU RUNS
 import argparse
 import asyncio
 import io
-import os
 import random
 import statistics
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -113,38 +113,30 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-MODELS = [
-    "google/vit-base-patch16-224",
-    "google/vit-large-patch16-224",
-    "facebook/dinov2-giant",
-]
+# Run as a file (python vit/server_vit_benchmark.py, or an IDE's run button)
+# rather than as a module (python -m vit.server_vit_benchmark): put the
+# repository root on sys.path so the common/ and vit/ packages resolve either
+# way.
+if not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-DATASET_NAME = "ILSVRC/imagenet-1k"
+# First: importing common.paths sets HF_HUB_CACHE, which huggingface_hub,
+# datasets and transformers read at import time.
+from common.paths import DATASET_DIR, HF_HUB_CACHE_DIR, MODELS_DIR, OUTPUT_ROOT
+from vit.catalog import DATASET_NAME, MODELS
 
-BASE_DIR = Path(__file__).resolve().parent
-DATASET_DIR = BASE_DIR / "dataset"
-MODELS_DIR = BASE_DIR / "models"
-# Results are filed per machine, since several boxes feed this repo and a run
-# is only comparable if you know which one produced it. Override when running
-# elsewhere: BENCH_OUTPUT_ROOT=output_SR630_6740_L4 python server_vit_benchmark.py
-OUTPUT_ROOT = Path(os.environ.get("BENCH_OUTPUT_ROOT",
-                                  BASE_DIR / "output_SR650a_6787P_RTX6000"))
 OUTPUT_DIR = OUTPUT_ROOT / "server_vit_output"
-HF_HUB_CACHE_DIR = BASE_DIR / "hf_hub_cache"
-
-# Must be set before huggingface_hub/datasets/transformers are imported: they
-# read HF_HUB_CACHE at import time to compute cache paths. Same reasoning as
-# vit_benchmark.py - keep blobs inside the project, and deliberately not
-# HF_HOME, which would also relocate the `hf auth login` token.
-os.environ.setdefault("HF_HUB_CACHE", str(HF_HUB_CACHE_DIR))
 
 import torch
 from datasets import load_dataset
 from PIL import Image
 from transformers import AutoImageProcessor, AutoModel, AutoModelForImageClassification
 
-import hostinfo
-import quantize
+from common import hostinfo, quantize, stats
+# Resource monitoring lives in common/resources.py so every benchmark reports
+# the same counters, measured the same way. psutil is optional there: it may
+# be None, and the sampler degrades to whatever is installed.
+from common.resources import ResourceSampler, psutil
 
 torch.set_num_threads(2)
 torch.set_num_interop_threads(1)
@@ -345,24 +337,6 @@ def parse_args():
     return p.parse_args()
 
 
-def percentile(values, p):
-    """Linear-interpolated percentile; no numpy dependency.
-
-    Matches vllm_dit_vit_benchmark.py's implementation so percentiles are
-    computed identically across the two harnesses.
-    """
-    if not values:
-        return float("nan")
-    ordered = sorted(values)
-    if len(ordered) == 1:
-        return ordered[0]
-    rank = (p / 100.0) * (len(ordered) - 1)
-    low = int(rank)
-    high = min(low + 1, len(ordered) - 1)
-    frac = rank - low
-    return ordered[low] + frac * (ordered[high] - ordered[low])
-
-
 @dataclass
 class Record:
     """One request's journey, in perf_counter seconds.
@@ -405,18 +379,6 @@ class Record:
     @property
     def infer_s(self):
         return self.done - self.batch_started
-
-
-# ---------------------------------------------------------------------------
-# Resource monitoring
-#
-# Moved to resources.py so vit_benchmark.py's throughput sweep reports the same
-# counters, measured the same way. psutil and pynvml are re-exported from there
-# because both are optional: either can be None, and the sampler degrades to
-# whatever is installed.
-# ---------------------------------------------------------------------------
-
-from resources import ResourceSample, ResourceSampler, psutil, pynvml  # noqa: F401
 
 
 class InferenceServer:
@@ -702,19 +664,6 @@ async def run_level(server, offsets, payloads, labels, sample_interval=0.05):
     return records, depth_samples, t0
 
 
-def _slope(points):
-    """Least-squares slope of y over x. Zero for degenerate input."""
-    if len(points) < 2:
-        return 0.0
-    n = len(points)
-    mx = sum(x for x, _ in points) / n
-    my = sum(y for _, y in points) / n
-    denom = sum((x - mx) ** 2 for x, _ in points)
-    if denom == 0:
-        return 0.0
-    return sum((x - mx) * (y - my) for x, y in points) / denom
-
-
 def score_level(records, depth_samples, t0, args, is_dino, sampler=None):
     """Reduce one level's records to a verdict plus the diagnostics behind it.
 
@@ -738,24 +687,24 @@ def score_level(records, depth_samples, t0, args, is_dino, sampler=None):
         return out
 
     lat = [r.latency for r in window]
-    out["p50_ms"] = 1000.0 * percentile(lat, 50)
-    out["p95_ms"] = 1000.0 * percentile(lat, 95)
-    out["p99_ms"] = 1000.0 * percentile(lat, 99)
+    out["p50_ms"] = 1000.0 * stats.percentile(lat, 50)
+    out["p95_ms"] = 1000.0 * stats.percentile(lat, 95)
+    out["p99_ms"] = 1000.0 * stats.percentile(lat, 99)
     out["max_ms"] = 1000.0 * max(lat)
     out["mean_ms"] = 1000.0 * statistics.fmean(lat)
-    out["sla_ms_actual"] = 1000.0 * percentile(lat, args.sla_percentile)
+    out["sla_ms_actual"] = 1000.0 * stats.percentile(lat, args.sla_percentile)
     out["achieved_qps"] = len(window) / args.measure_s
 
     # Stage breakdown: which of the four is eating the budget.
-    out["harness_lag_p95_ms"] = 1000.0 * percentile([r.harness_lag for r in window], 95)
-    out["preprocess_p95_ms"] = 1000.0 * percentile([r.preprocess_s for r in window], 95)
-    out["queue_wait_p95_ms"] = 1000.0 * percentile([r.queue_wait_s for r in window], 95)
-    out["infer_p95_ms"] = 1000.0 * percentile([r.infer_s for r in window], 95)
+    out["harness_lag_p95_ms"] = 1000.0 * stats.percentile([r.harness_lag for r in window], 95)
+    out["preprocess_p95_ms"] = 1000.0 * stats.percentile([r.preprocess_s for r in window], 95)
+    out["queue_wait_p95_ms"] = 1000.0 * stats.percentile([r.queue_wait_s for r in window], 95)
+    out["infer_p95_ms"] = 1000.0 * stats.percentile([r.infer_s for r in window], 95)
     out["mean_batch"] = statistics.fmean([r.batch_size for r in window])
 
     # Steady state, checked two independent ways.
     in_win = [(t, d) for t, d in depth_samples if win_start <= t < win_end]
-    depth_slope = _slope([(t - win_start, d) for t, d in in_win])
+    depth_slope = stats.slope([(t - win_start, d) for t, d in in_win])
     out["queue_depth_slope_per_s"] = depth_slope
     out["queue_depth_max"] = max((d for _, d in in_win), default=0)
     backlog_growth = depth_slope * args.measure_s
@@ -764,10 +713,10 @@ def score_level(records, depth_samples, t0, args, is_dino, sampler=None):
     first = [r.latency for r in window if r.scheduled < half]
     second = [r.latency for r in window if r.scheduled >= half]
     if first and second:
-        p95a, p95b = percentile(first, 95), percentile(second, 95)
+        p95a, p95b = stats.percentile(first, 95), stats.percentile(second, 95)
         drift = (p95b / p95a) if p95a > 0 else 1.0
     else:
-        p95b = percentile(lat, 95)
+        p95b = stats.percentile(lat, 95)
         drift = 1.0
     out["p95_drift"] = drift
 
@@ -796,7 +745,7 @@ def score_level(records, depth_samples, t0, args, is_dino, sampler=None):
     )
     out["harness_bound"] = harness_bound
 
-    met_sla = percentile(lat, args.sla_percentile) <= sla_s
+    met_sla = stats.percentile(lat, args.sla_percentile) <= sla_s
     out["passed"] = bool(met_sla and not unstable and not harness_bound)
     if not met_sla:
         out["reason"] = f"p{args.sla_percentile:g} {out['sla_ms_actual']:.1f} ms > {args.sla_ms:g} ms"
@@ -960,10 +909,8 @@ def main():
     log(f"Model      : {args.model}")
     log(f"Dataset    : {DATASET_NAME}")
     log(f"Device     : {args.device}")
-    log(f"Server     : {hostinfo.server_sku()}")
-    log(f"CPU        : {hostinfo.cpu_sku()}")
-    log(f"CPU cores  : {hostinfo.cpu_topology()}")
-    log(f"GPU        : {hostinfo.gpu_sku()}")
+    for line in hostinfo.header_lines():
+        log(line)
     log(f"Dtype      : {args.dtype}")
     log(f"Quant      : {quantize.describe(args.quant)}")
     log(f"Workload   : {args.workload}")

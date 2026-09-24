@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Shared machinery for the offline throughput sweeps.
 
-vit_benchmark.py --throughput and dit_benchmark.py --throughput ask the same
+vit/vit_benchmark.py --throughput and dit/dit_benchmark.py --throughput ask the same
 question of very different workloads: with no SLA and no arrival process, how
 much work does the device do when it is never allowed to go idle? The parts
 that are identical between them live here so the two cannot drift apart - a
@@ -61,11 +61,6 @@ def power_efficiency(rate, res):
     }
 
 
-# --precisions tokens. int8 and fp8 are W8A8 recipes layered on a bfloat16
-# model, not dtypes of their own - everything they do not quantise stays
-# bfloat16, so that is what they pair with.
-
-
 def as_list(value):
     """argparse value -> list of tokens, however the user spaced it.
 
@@ -86,9 +81,11 @@ def joined(value):
     """The same tokens as one comma-separated string, for the run header."""
     return ",".join(as_list(value))
 
-# --precisions tokens. int8 and fp8 are W8A8 recipes layered on a bfloat16
-# model, not dtypes of their own - everything they do not quantise stays
-# bfloat16, so that is what they pair with.
+
+# --precisions tokens. int8, fp8 and fp4 are quantisation recipes layered on a
+# bfloat16 model, not dtypes of their own - everything they do not quantise
+# stays bfloat16, so that is what they pair with. Whether the device can run
+# one is quantize.check()'s call, not this table's.
 PRECISIONS = {
     "fp32": ("float32", "none"),
     "float32": ("float32", "none"),
@@ -96,6 +93,8 @@ PRECISIONS = {
     "bfloat16": ("bfloat16", "none"),
     "int8": ("bfloat16", "int8"),
     "fp8": ("bfloat16", "fp8"),
+    "fp4": ("bfloat16", "fp4"),
+    "nvfp4": ("bfloat16", "fp4"),
 }
 
 

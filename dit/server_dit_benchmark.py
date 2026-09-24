@@ -126,7 +126,7 @@ POWER
 
 OUTPUT
   <OUTPUT_ROOT>/server_dit_output/server_dit_<model>_<precision>_<device><N>r_<ts>.txt
-  OUTPUT_ROOT comes from dit_benchmark.py: output_SR650a_6787P_RTX6000 on this
+  OUTPUT_ROOT comes from common/paths.py: output_SR650a_6787P_RTX6000 on this
   box, overridable with BENCH_OUTPUT_ROOT.
   plus a _requests.csv with every request's stage timings, and a few
   calibration images for sanity checks (a broken fp8 run generates noise fast).
@@ -140,29 +140,28 @@ import io
 import math
 import random
 import statistics
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 
-# dit_benchmark sets HF_HUB_CACHE before diffusers is imported, and owns the
-# model list, the prompt loader and the per-machine output root.
-from dit_benchmark import (
-    GATED,
-    MODELS,
-    MODELS_DIR,
-    OUTPUT_ROOT,
-    UNSUPPORTED,
-    load_prompts,
-)
-from server_vit_benchmark import _slope, percentile
+# Run as a file (python dit/server_dit_benchmark.py, or an IDE's run button)
+# rather than as a module (python -m dit.server_dit_benchmark): put the
+# repository root on sys.path so the common/ and dit/ packages resolve either
+# way.
+if not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+# First: importing common.paths sets HF_HUB_CACHE, which huggingface_hub and
+# diffusers read at import time.
+from common.paths import MODELS_DIR, OUTPUT_ROOT
+from dit.catalog import GATED, MODELS, PROMPT_DATASET, UNSUPPORTED, load_prompts
 
 import torch
 
-import hostinfo
-import quantize
-import resources
-import sweep
+from common import hostinfo, quantize, resources, stats, sweep
 
 OUTPUT_DIR = OUTPUT_ROOT / "server_dit_output"
 
@@ -883,7 +882,7 @@ def pct(values, p):
             if not math.isnan(v)]
     if not vals:
         return math.nan
-    r = percentile(vals, p)
+    r = stats.percentile(vals, p)
     return math.inf if r >= _INF_SENTINEL / 2 else r
 
 
@@ -972,7 +971,7 @@ def score_level(reqs, depth_samples, aborted, rate, args, model, sampler):
     })
 
     in_win = [(t - t_start, d) for t, d in depth_samples if t_start <= t <= t_end]
-    slope = _slope(in_win)
+    slope = stats.slope(in_win)
     backlog_growth = slope * span
     out["queue_depth_slope_per_s"] = slope
     out["queue_depth_max"] = max((d for _, d in in_win), default=0)
@@ -1148,14 +1147,13 @@ def main():
     log(f"Timestamp  : {timestamp}")
     log("Script     : server_dit_benchmark")
     log(f"Model      : {args.model}")
-    log("Dataset    : byliutao/coco2014val_10k (prompts)")
+    log(f"Dataset    : {PROMPT_DATASET} (prompts)")
     log(f"Device     : {args.device}")
-    log(f"Server     : {hostinfo.server_sku()}")
-    log(f"CPU        : {hostinfo.cpu_sku()}")
-    log(f"CPU cores  : {hostinfo.cpu_topology()}")
-    # nvidia-smi rather than torch: a torch query here would open a CUDA
-    # context in the parent and cost the replica memory on the same card.
-    log(f"GPU        : {hostinfo.gpu_sku(use_torch=False)}")
+    # use_torch=False: nvidia-smi rather than torch for the GPU line. A torch
+    # query here would open a CUDA context in the parent and cost the replica
+    # memory on the same card.
+    for line in hostinfo.header_lines(use_torch=False):
+        log(line)
     log(f"Dtype      : {args.dtype}")
     log(f"Quant      : {quantize.describe(args.quant)}")
     log(f"TF32       : {'enabled' if args.tf32 and args.device == 'cuda' else 'disabled'}")
@@ -1322,10 +1320,10 @@ def main():
             best, best_res, capped = asyncio.run(driver())
 
         # Replica-side memory, before the pool goes away.
-        stats = []
+        replica_stats = []
         for conn in pool.conns:
             conn.send({"stats": True})
-            stats.append(conn.recv())
+            replica_stats.append(conn.recv())
     finally:
         if sampler is not None:
             sampler.stop()
@@ -1339,9 +1337,9 @@ def main():
     log("workload                : interactive")
     log(f"calibrated_mu_rps       : {model.mu:.5f}")
     log(f"calibrated_service_s    : {model.s:.4f}")
-    rss = [s["rss_max_gib"] for s in stats]
+    rss = [s["rss_max_gib"] for s in replica_stats]
     log(f"replica_rss_gib_max     : {max(rss):.2f}")
-    gpu_peaks = [s["gpu_peak_alloc_gib"] for s in stats if s["gpu_peak_alloc_gib"]]
+    gpu_peaks = [s["gpu_peak_alloc_gib"] for s in replica_stats if s["gpu_peak_alloc_gib"]]
     if gpu_peaks:
         log(f"gpu_peak_alloc_gib      : {max(gpu_peaks):.2f}")
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""W8A8 / W4A4 post-training quantisation, shared by vit_benchmark.py and
-server_vit_benchmark.py so the two mean exactly the same thing by --quant.
+"""W8A8 / W4A4 post-training quantisation, shared by every benchmark in vit/
+and dit/ so they all mean exactly the same thing by --quant.
 
 What gets quantised, and when
   Weights, once, at startup. Every nn.Linear weight is converted to 8 bits and
