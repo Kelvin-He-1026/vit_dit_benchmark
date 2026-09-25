@@ -95,6 +95,26 @@ On CPU only `int8` is accepted. No x86 CPU has FP8 arithmetic, so that path is
 software emulation and runs about 4x slower than plain bfloat16. int8 on this
 Xeon measured at parity with AMX bfloat16 rather than ahead of it.
 
+### Serving from several replicas (both sockets)
+
+`server_vit_benchmark.py --replicas N` runs N inference processes behind one
+shared queue, each with its own model and thread pool, pinned to its own slice
+of `--cpu-cores` (or its own GPU from `--devices`). Routing is pull-based: every
+replica waits on the same queue and whichever is idle takes the next request, so
+a request only waits when all of them are busy.
+
+```bash
+python -m vit.server_vit_benchmark --model google/vit-large-patch16-224 \
+    --device cpu --dtype bfloat16 --replicas 4 --cpu-cores 0-31,48-79 \
+    --preprocess-workers 8
+```
+
+Leave some cores out of `--cpu-cores`: the harness pins its own process
+(preprocessing and scheduling) to whatever the replicas leave free. If the
+replicas take every core, preprocessing preempts their threads and the tail
+explodes — ViT-L at 20 req/s measured p95 59 ms with four replicas on 64 cores,
+403 ms with six covering all 96.
+
 ### Offline throughput sweep
 
 `--throughput` answers a different question from `server_vit_benchmark.py`:

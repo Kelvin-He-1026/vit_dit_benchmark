@@ -223,6 +223,10 @@ METRIC_FIELDS = [
     "mean_batch_size",
     "queue_depth_max",
     "p95_drift",
+    # server_vit: the drift its verdict uses, and its measured capacity.
+    "p50_drift",
+    "service_capacity_qps",
+    "capacity_bound_by",
     # server_dit calibration: batch-1 service time before the sweep.
     "calibrated_mu_rps",
     "calibrated_service_s",
@@ -359,6 +363,9 @@ KEY_MAP = {
     "mean_batch_size": "mean_batch_size",
     "queue_depth_max": "queue_depth_max",
     "p95_drift": "p95_drift",
+    "p50_drift": "p50_drift",
+    "service_capacity_qps": "service_capacity_qps",
+    "capacity_bound_by": "capacity_bound_by",
     "harness_lag_ms": "harness_lag_ms",
     "preprocess_ms": "preprocess_ms",
     "queue_wait_ms": "queue_wait_ms",
@@ -438,7 +445,7 @@ KEY_MAP = {
 # run's batch size, and best_batch_size says which one won.
 NUMERIC_FIELDS = {
     "batch_size", "warmup", "measure_s", "think_time_s", "batch_wait_ms",
-    "pre_workers", "sla_ms", "p95_drift", "drop_after_factor",
+    "pre_workers", "sla_ms", "p95_drift", "p50_drift", "drop_after_factor",
     "calibrate_generations",
 }
 REQUESTS_RE = re.compile(r"(\d+)\s+scored\s*\+\s*(\d+)\s+warmup")
@@ -598,7 +605,8 @@ GROUP_FIELDS = (
 PASSTHROUGH_METRICS = (
     "max_qps", "max_concurrent_users", "max_concurrent_inflight",
     "requests_measured", "p50_ms", "p95_ms", "p99_ms", "max_ms",
-    "mean_batch_size", "queue_depth_max", "p95_drift",
+    "mean_batch_size", "queue_depth_max", "p95_drift", "p50_drift",
+    "service_capacity_qps", "capacity_bound_by",
     "harness_lag_ms", "preprocess_ms", "queue_wait_ms", "inference_ms",
     "cpu_logical_count", "cpu_cores_busy_mean", "cpu_cores_busy_max",
     "proc_cpu_pct_mean", "sys_cpu_pct_mean", "rss_gib_max", "threads_max",

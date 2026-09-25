@@ -1,0 +1,52 @@
+Timestamp  : 20260924_185258
+Script     : server_vit_benchmark
+Model      : facebook/dinov2-giant
+Dataset    : ILSVRC/imagenet-1k
+Device     : cpu
+Server     : ThinkSystem SR630 V4
+CPU        : Intel(R) Xeon(R) 6740P
+CPU cores  : 96 logical, 96 physical, 2 sockets
+GPU        : NVIDIA L4 x2
+Dtype      : bfloat16
+Quant      : disabled
+Workload   : interactive
+Think time : 5 s
+SLA        : p95 end-to-end <= 100 ms
+Batch size : 32 (max)
+Batch wait : 5 ms
+Pre workers: 8
+Samples    : 256
+Warmup     : 5 s per level
+Measure    : 240 s per level
+Seed       : 42
+Compile    : disabled
+Processor  : slow
+Replicas   : 4
+Devices    : cpu
+CPU bind   : 0-39,48-87, split between replicas
+Threads    : 16 per replica
+Parent     : 16 cores the replicas leave free (preprocessing + scheduling)
+Self-test  : disabled
+Payloads   : 256 JPEGs, 67.4 KiB avg
+  replica 0: cpu, 16 intra-op threads, 20 cores visible
+  replica 1: cpu, 16 intra-op threads, 20 cores visible
+  replica 2: cpu, 16 intra-op threads, 20 cores visible
+  replica 3: cpu, 16 intra-op threads, 20 cores visible
+Warmed buckets: 1,2,4,8,16,32 x1 on 4 replicas
+Monitor    : host=psutil device=off every 250 ms
+
+=== SWEEP (req/s) ===
+[    0.50 req/s] n=   119  p50=  131.2  p95=   142.2  p99=   149.1 ms  batch=  1.0  cpu=  1.0c  gpu=  nan%  FAIL  p95 142.2 ms > 100 ms
+           routed: r0=31 (25%)  r1=31 (25%)  r2=31 (25%)  r3=30 (24%)
+
+=== RESULT ===
+sla_ms                  : 100
+sla_seconds             : 0.1000
+sla_percentile          : 95
+workload                : interactive
+max_concurrent_users    : 0
+max_qps                 : 0
+verdict                 : SLA unmet at every level tried; this cell cannot serve a single user inside the budget
+
+=== LADDER ===
+        0.50 req/s   p95=   142.16 ms  n=   119  FAIL  p95 142.2 ms > 100 ms

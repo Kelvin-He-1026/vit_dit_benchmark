@@ -110,6 +110,7 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -127,7 +128,7 @@ import torch
 from PIL import Image
 from transformers import AutoImageProcessor, AutoModel, AutoModelForImageClassification
 
-from common import hostinfo, hub, quantize
+from common import hostinfo, hub, quantize, sweep
 from common.util import percentile, slope
 from vit.vit_common import DATASET_NAME, MODELS, load_validation
 
@@ -173,14 +174,41 @@ def parse_args():
         "--threads",
         type=int,
         default=None,
-        help="torch.set_num_threads() for CPU inference. Together with "
+        help="Intra-op threads for CPU inference, PER REPLICA. Together with "
         "--preprocess-workers this partitions the machine; see the module "
-        "docstring. Defaults to PyTorch's own default (all logical CPUs).",
+        "docstring. Defaults to CPU_DEFAULT_THREADS (16), or the replica's "
+        "core count if that is smaller.",
+    )
+    p.add_argument(
+        "--replicas",
+        type=int,
+        default=1,
+        help="Inference replicas behind one shared queue (default 1). Each is "
+        "its own process with its own model and thread pool, pinned to its "
+        "own slice of --cpu-cores (or its own GPU from --devices), so two "
+        "sockets serve as one server. With 1 the model runs in-process as "
+        "before. See ReplicaServer for how requests are routed.",
+    )
+    p.add_argument(
+        "--cpu-cores",
+        nargs="+",
+        default=None,
+        help="Cores for the replicas, split contiguously between them, e.g. "
+        "'0-95' with --replicas 2 puts one replica on each socket, with 6 "
+        "gives each 16 cores. Pinning also keeps each replica's memory on its "
+        "own socket (first touch). Needs --replicas > 1.",
+    )
+    p.add_argument(
+        "--devices",
+        nargs="+",
+        default=None,
+        help="GPUs for the replicas, round-robin, e.g. 'cuda:0,cuda:1' to "
+        "serve from both L4s. Needs --replicas > 1 and --device cuda.",
     )
     p.add_argument(
         "--image-processor",
         choices=["slow", "fast"],
-        default="fast",
+        default="slow",
         help="transformers image-processor backend: 'slow' is the PIL/numpy "
         "path, 'fast' the torchvision one. Defaults to slow, which is also "
         "what vit_benchmark.py gets, because 'fast' is a footgun here: it "
@@ -357,6 +385,7 @@ class Record:
     batch_started: float = 0.0
     done: float = 0.0
     batch_size: int = 0
+    replica: int = 0          # which inference replica served it
     label: int = -1
     pred: int = -1
 
@@ -592,6 +621,219 @@ class NullServer:
         rec.done = time.perf_counter()
 
 
+def _vit_replica(conn, cfg, _payload):
+    """One inference replica: its own model, cores and thread pool.
+
+    Protocol (parent -> replica -> parent), via sweep.ReplicaPool:
+      startup                          -> {"started": ...} or {"error": ...}
+      {"warm": tensor, "buckets", "reps"} -> {"warmed": True}
+      {"batch": tensor, "n": n}        -> {"preds": [...]} or {"error": ...}
+      {"stop": True}                   -> exits
+    The pixel tensors arrive through torch.multiprocessing's pickler, which
+    passes CPU tensors by shared memory: the parent's preprocessed batch is
+    not copied through the pipe.
+    """
+    import os as _os
+
+    if cfg.get("cores"):
+        try:
+            _os.sched_setaffinity(0, set(cfg["cores"]))
+        except (AttributeError, OSError) as exc:
+            conn.send({"warning": f"affinity not set: {exc}"})
+
+    import torch as _torch
+    from transformers import AutoModel, AutoModelForImageClassification
+
+    from common import hub as _hub
+    from common import quantize as _quantize
+
+    # Importing this module in the child already ran the module-level
+    # set_num_threads(2) / set_num_interop_threads(1); widen the intra-op pool
+    # to this replica's share, and leave inter-op alone (it can be set once).
+    _torch.set_num_threads(cfg["threads"])
+
+    device = cfg["device"]
+    is_cuda = device.startswith("cuda")
+    dtype = _torch.float32 if cfg["dtype"] == "float32" else _torch.bfloat16
+    try:
+        if is_cuda:
+            _torch.cuda.set_device(device)
+        cls = AutoModel if cfg["is_dino"] else AutoModelForImageClassification
+        model = _hub.load_cached(cls.from_pretrained, cfg["model"],
+                                 cache_dir=cfg["models_dir"])
+        model = model.to(device=device, dtype=dtype).eval()
+        model = _quantize.apply(model, cfg["quant"])
+        if cfg["compile"]:
+            model = _torch.compile(model, mode="reduce-overhead" if is_cuda else None)
+    except Exception as exc:  # noqa: BLE001 - the parent turns this into a message
+        conn.send({"error": f"{type(exc).__name__}: {str(exc)[:300]}"})
+        return
+
+    buckets = cfg["buckets"]
+
+    def run(batch, n):
+        # Same padding rule as InferenceServer._run_batch, so a compiled
+        # replica only ever sees warmed shapes.
+        if cfg["pad_to_bucket"]:
+            padded_to = next((b for b in buckets if b >= n), n)
+            if padded_to > n:
+                pad = batch[-1:].expand(padded_to - n, *batch.shape[1:])
+                batch = _torch.cat([batch, pad], dim=0)
+        batch = batch.to(device=device, dtype=dtype, non_blocking=True)
+        with _torch.inference_mode():
+            out = model(pixel_values=batch)
+            if cfg["is_dino"]:
+                _ = out.last_hidden_state[:, 0]
+                preds = [-1] * n
+            else:
+                preds = out.logits[:n].argmax(dim=-1).cpu().tolist()
+        if is_cuda:
+            _torch.cuda.synchronize(device)
+        return preds
+
+    started = {
+        "started": True,
+        "device": device,
+        "threads": _torch.get_num_threads(),
+        "cores": (len(_os.sched_getaffinity(0))
+                  if hasattr(_os, "sched_getaffinity") else None),
+    }
+    if is_cuda:
+        uuid = getattr(_torch.cuda.get_device_properties(device), "uuid", None)
+        started["gpu_uuid"] = str(uuid) if uuid is not None else None
+    conn.send(started)
+
+    while True:
+        try:
+            msg = conn.recv()
+        except EOFError:
+            break
+        if msg.get("stop"):
+            break
+        if "warm" in msg:
+            for b in msg["buckets"]:
+                for _ in range(msg["reps"]):
+                    run(msg["warm"].expand(b, *msg["warm"].shape[1:]).contiguous(), b)
+            conn.send({"warmed": True})
+        elif "batch" in msg:
+            try:
+                conn.send({"preds": run(msg["batch"], msg["n"])})
+            except Exception as exc:  # noqa: BLE001 - one bad batch is not fatal
+                conn.send({"error": f"{type(exc).__name__}: {str(exc)[:300]}"})
+
+
+class ReplicaServer(InferenceServer):
+    """InferenceServer with N inference replicas behind its one queue.
+
+    Routing is pull-based, not pushed. Preprocessing is unchanged: every
+    request is decoded by the shared --preprocess-workers pool and put on the
+    ONE asyncio queue. Each replica has its own batcher coroutine here in the
+    parent, and all of them wait on that same queue. Whichever replica is
+    free takes the next request - plus anything else already queued, up to
+    --max-batch-size, within --batch-timeout-ms - sends the batch to its
+    process, and only goes back to the queue once the result is in.
+
+    So there is no round-robin and no per-replica queue to fill up: a request
+    waits only while EVERY replica is busy, a slow replica simply takes less
+    work, and a burst of arrivals is spread across idle replicas instead of
+    serialising behind one. That is what shortens the tail at low load, and
+    what a load balancer in front of N servers approximates with
+    least-outstanding-requests routing.
+
+    Each batcher talks to its replica through a single-thread executor, so a
+    blocking pipe round trip never stalls the event loop issuing arrivals.
+    """
+
+    def __init__(self, pool, processor, is_dino, max_batch, batch_timeout_s,
+                 preprocess_workers, buckets):
+        super().__init__(model=None, processor=processor, device="cpu",
+                         dtype=None, is_dino=is_dino, max_batch=max_batch,
+                         batch_timeout_s=batch_timeout_s,
+                         preprocess_workers=preprocess_workers,
+                         buckets=buckets, pad_to_bucket=False)
+        self.pool = pool
+        self.n = len(pool.conns)
+        self._rep_pools = [ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"rep{i}")
+                           for i in range(self.n)]
+        self._batchers = []
+        self.served = [0] * self.n
+
+    async def start(self):
+        self.queue = asyncio.Queue()
+        self._batchers = [asyncio.create_task(self._replica_batcher(i))
+                          for i in range(self.n)]
+
+    async def stop(self):
+        for t in self._batchers:
+            t.cancel()
+        await asyncio.gather(*self._batchers, return_exceptions=True)
+        self._batchers = []
+        self._pre_pool.shutdown(wait=True)
+        for ex in self._rep_pools:
+            ex.shutdown(wait=True)
+
+    def reset_counters(self):
+        self.batch_sizes = []
+        self.served = [0] * self.n
+
+    def warm(self, payload, buckets, reps, log):
+        """Every batch shape on every replica, all replicas at once."""
+        tensor = self._preprocess(payload)
+        for conn in self.pool.conns:
+            conn.send({"warm": tensor, "buckets": buckets, "reps": reps})
+        for i, conn in enumerate(self.pool.conns):
+            reply = conn.recv()
+            if "error" in reply:
+                raise RuntimeError(f"replica {i} failed to warm: {reply['error']}")
+        log(f"Warmed buckets: {','.join(str(b) for b in buckets)} x{reps} "
+            f"on {self.n} replicas")
+
+    def _call(self, i, msg):
+        self.pool.conns[i].send(msg)
+        return self.pool.conns[i].recv()
+
+    async def _replica_batcher(self, i):
+        loop = asyncio.get_running_loop()
+        while True:
+            batch = [await self.queue.get()]
+            deadline = time.perf_counter() + self.batch_timeout_s
+            while len(batch) < self.max_batch:
+                remaining = deadline - time.perf_counter()
+                if remaining <= 0:
+                    break
+                try:
+                    batch.append(await asyncio.wait_for(self.queue.get(), remaining))
+                except asyncio.TimeoutError:
+                    break
+
+            started = time.perf_counter()
+            for rec, _, _ in batch:
+                rec.batch_started = started
+                rec.batch_size = len(batch)
+                rec.replica = i
+            self.batch_sizes.append(len(batch))
+            self.served[i] += len(batch)
+
+            msg = {"batch": torch.cat([t for _, t, _ in batch], dim=0), "n": len(batch)}
+            try:
+                reply = await loop.run_in_executor(self._rep_pools[i], self._call, i, msg)
+            except (EOFError, BrokenPipeError, OSError) as exc:
+                reply = {"error": f"replica {i} died ({type(exc).__name__})"}
+            if "error" in reply:
+                exc = RuntimeError(reply["error"])
+                for _, _, fut in batch:
+                    if not fut.done():
+                        fut.set_exception(exc)
+                continue
+
+            finished = time.perf_counter()
+            for (rec, _, fut), pred in zip(batch, reply["preds"]):
+                rec.done = finished
+                rec.pred = pred
+                if not fut.done():
+                    fut.set_result(None)
+
+
 # ---------------------------------------------------------------------------
 # Arrival schedules
 #
@@ -729,11 +971,58 @@ def score_level(records, depth_samples, t0, args, is_dino, sampler=None):
     second = [r.latency for r in window if r.scheduled >= half]
     if first and second:
         p95a, p95b = percentile(first, 95), percentile(second, 95)
-        drift = (p95b / p95a) if p95a > 0 else 1.0
+        p50a, p50b = percentile(first, 50), percentile(second, 50)
+        p95_drift = (p95b / p95a) if p95a > 0 else 1.0
+        drift = (p50b / p50a) if p50a > 0 else 1.0
     else:
         p95b = percentile(lat, 95)
-        drift = 1.0
-    out["p95_drift"] = drift
+        p95_drift = drift = 1.0
+    # Reported for reference; the verdict below uses the MEDIAN drift. Each
+    # half's p95 rests on a handful of its slowest requests (the 3rd slowest
+    # of 60 at 1 req/s for 120 s), so two outliers landing late move it by a
+    # third on a server that is idle 95% of the time - simulated on a stable
+    # ViT-L CPU latency profile, the p95 ratio falsely failed 7.6% of levels
+    # at 120 s and 0.8% even at 600 s. A real backlog delays every request,
+    # so it lifts the median as much as the tail; outliers barely move it.
+    out["p95_drift"] = p95_drift
+    out["p50_drift"] = drift
+
+    # Measured capacity, the check no finite window can fake. A level above
+    # capacity still meets the SLA if it ends before its growing backlog has
+    # pushed the percentile over, so the percentile alone cannot rule it out.
+    # Two stages in series, the slower one binds:
+    #   inference  requests completed per second a replica was busy (each
+    #              replica runs one batch at a time, so its busy time is the
+    #              union of its batches), times the replica count. This is the
+    #              capacity at the batch sizes this level actually formed.
+    #   preprocess worker count / mean decode-and-resize time per request.
+    by_replica = defaultdict(set)
+    for r in window:
+        if r.done > r.batch_started:
+            by_replica[r.replica].add((r.batch_started, r.done))
+    busy = 0.0
+    for spans in by_replica.values():
+        cur = None
+        for s0, e0 in sorted(spans):
+            if cur is None or s0 > cur[1]:
+                if cur is not None:
+                    busy += cur[1] - cur[0]
+                cur = [s0, e0]
+            else:
+                cur[1] = max(cur[1], e0)
+        if cur is not None:
+            busy += cur[1] - cur[0]
+    infer_capacity = (args.replicas * len(window) / busy if busy > 0
+                      else float("inf"))
+    pre = [r.preprocess_s for r in window if r.preprocess_s > 0]
+    pre_capacity = (args.preprocess_workers / statistics.fmean(pre)
+                    if pre else float("inf"))
+    capacity = min(infer_capacity, pre_capacity)
+    offered = len(window) / args.measure_s
+    out["capacity_qps"] = capacity
+    out["capacity_bound_by"] = "inference" if infer_capacity <= pre_capacity else "preprocess"
+    out["rho_measured"] = offered / capacity if capacity > 0 else float("inf")
+    overloaded = not args.selftest and out["rho_measured"] >= 1.0
 
     # A rung above capacity is unstable rather than merely slow, and its
     # percentile is a function of run length. Say so explicitly instead of
@@ -745,7 +1034,7 @@ def score_level(records, depth_samples, t0, args, is_dino, sampler=None):
     # it would end the sweep early for no reason.
     drifting = drift > 1.25 and p95b > 0.5 * sla_s
     backlogged = backlog_growth > 0.10 * len(window)
-    unstable = drifting or backlogged
+    unstable = drifting or backlogged or overloaded
     out["stable"] = not unstable
 
     # If the generator's own lateness is a large share of measured latency,
@@ -770,10 +1059,16 @@ def score_level(records, depth_samples, t0, args, is_dino, sampler=None):
             f"is {100 * out['harness_lag_p95_ms'] / out['p95_ms']:.0f}% of latency "
             f"- re-run with --selftest"
         )
+    elif overloaded:
+        out["reason"] = (
+            f"overloaded: offered {offered:.2f} req/s >= measured capacity "
+            f"{capacity:.2f} req/s ({out['capacity_bound_by']}-bound, rho "
+            f"{out['rho_measured']:.2f}); met the SLA only because the level ended"
+        )
     elif drifting:
         out["reason"] = (
-            f"met SLA but not steady state (p95 drift x{drift:.2f} to "
-            f"{1000 * p95b:.1f} ms)"
+            f"met SLA but not steady state (median latency drift x{drift:.2f}, "
+            f"second-half p95 {1000 * p95b:.1f} ms)"
         )
     elif backlogged:
         out["reason"] = (
@@ -894,11 +1189,41 @@ def main():
         print("WARNING: --quant without --compile is usually slower than plain "
               "bfloat16; the quantise steps only pay off once Inductor fuses "
               "them into the surrounding kernels.")
-    if args.threads is not None:
-        torch.set_num_threads(args.threads)
-    elif args.device == "cpu":
-        # Not the module-level 2, which is for feeding a GPU.
-        torch.set_num_threads(min(CPU_DEFAULT_THREADS, os.cpu_count() or 1))
+    if args.replicas < 1:
+        raise RuntimeError("--replicas must be >= 1")
+    if args.replicas == 1 and (args.cpu_cores or args.devices):
+        raise RuntimeError("--cpu-cores / --devices place replicas; use them "
+                           "with --replicas > 1")
+    if args.replicas > 1 and args.selftest:
+        raise RuntimeError("--selftest measures the harness alone; it has no replicas")
+    if args.replicas == 1:
+        if args.threads is not None:
+            torch.set_num_threads(args.threads)
+        elif args.device == "cpu":
+            # Not the module-level 2, which is for feeding a GPU.
+            torch.set_num_threads(min(CPU_DEFAULT_THREADS, os.cpu_count() or 1))
+    # With replicas the model runs in their processes, each with its own pool
+    # (cfg_for below); this process only preprocesses and schedules, so it
+    # keeps the module-level 2 threads and stays out of their way.
+    rep_devices = ((sweep.as_list(args.devices) or ["cuda:0"])
+                   if args.device == "cuda" else ["cpu"])
+    rep_slices = sweep.split_cores(
+        sweep.parse_cores(args.cpu_cores) if args.cpu_cores else [], args.replicas)
+    rep_threads = args.threads or min(
+        CPU_DEFAULT_THREADS, len(rep_slices[0]) if rep_slices[0] else CPU_DEFAULT_THREADS)
+    # Keep this process OFF the replicas' cores. It runs the preprocessing
+    # pool and the schedulers, and if it floats onto a core a replica owns it
+    # preempts one of that replica's intra-op threads, which stalls the whole
+    # forward pass at its next barrier. Measured, ViT-L CPU at 20 req/s: four
+    # replicas x16 threads with this process on the 32 cores they left free,
+    # p95 59 ms; six replicas covering every core, so no free cores, p95 403 ms.
+    parent_cores = None
+    if args.replicas > 1 and args.cpu_cores and hasattr(os, "sched_getaffinity"):
+        used = {c for sl in rep_slices if sl for c in sl}
+        free = set(os.sched_getaffinity(0)) - used
+        if free:
+            os.sched_setaffinity(0, free)
+            parent_cores = sorted(free)
 
     dtype = torch.float32 if args.dtype == "float32" else torch.bfloat16
     is_dino = "dinov2" in args.model.lower()
@@ -947,7 +1272,21 @@ def main():
     log(f"Seed       : {args.seed}")
     log(f"Compile    : {'enabled' if args.compile else 'disabled'}")
     log(f"Processor  : {args.image_processor}")
-    log(f"Threads    : {torch.get_num_threads()}")
+    if args.replicas == 1:
+        log(f"Threads    : {torch.get_num_threads()}")
+    else:
+        log(f"Replicas   : {args.replicas}")
+        log(f"Devices    : {','.join(rep_devices)}")
+        log(f"CPU bind   : {sweep.joined(args.cpu_cores) or 'unpinned'}, "
+            f"split between replicas")
+        log(f"Threads    : {rep_threads} per replica")
+        if parent_cores:
+            log(f"Parent     : {len(parent_cores)} cores the replicas leave free "
+                f"(preprocessing + scheduling)")
+        elif args.cpu_cores:
+            log("WARNING    : the replicas claim every core, so preprocessing "
+                "shares their cores and preempts them - expect a long tail. "
+                "Leave some cores out of --cpu-cores.")
     log(f"Self-test  : {'enabled (no-op server)' if args.selftest else 'disabled'}")
 
     # Same dataset plumbing as vit_benchmark.py: ImageNet is gated (accept the
@@ -964,12 +1303,56 @@ def main():
     log(f"Payloads   : {len(payloads)} JPEGs, "
         f"{statistics.fmean(len(p) for p in payloads) / 1024:.1f} KiB avg")
 
+    replica_pool = None
+    # The replicas are other processes, which this process's own CPU counter
+    # does not see; the machine-wide one does.
+    cpu_key = "sys_cores_busy_mean" if args.replicas > 1 else "cpu_cores_busy_mean"
     if args.selftest:
         # Deliberately no model and no processor: the point of the self-test is
         # to time the generator and the event loop, so loading weights would
         # only slow down startup and muddy what is being measured.
         log("Model load : skipped (--selftest)")
         server = NullServer()
+    elif args.replicas > 1:
+        # The parent keeps only the processor; each replica loads its own model.
+        processor = hub.load_cached(
+            AutoImageProcessor.from_pretrained,
+            args.model,
+            cache_dir=str(MODELS_DIR),
+            use_fast=(args.image_processor == "fast"),
+            log=log,
+        )
+
+        def cfg_for(i):
+            return {
+                "model": args.model,
+                "models_dir": str(MODELS_DIR),
+                "device": rep_devices[i % len(rep_devices)],
+                "dtype": args.dtype,
+                "quant": args.quant,
+                "compile": args.compile,
+                "threads": rep_threads,
+                "cores": rep_slices[i],
+                "is_dino": is_dino,
+                "buckets": buckets,
+                "pad_to_bucket": args.compile,
+            }
+
+        replica_pool = sweep.ReplicaPool(args.replicas, _vit_replica, cfg_for,
+                                         None, log=log)
+        for i, st in enumerate(replica_pool.settings):
+            log(f"  replica {i}: {st['device']}, {st['threads']} intra-op threads, "
+                f"{st['cores']} cores visible")
+        server = ReplicaServer(
+            pool=replica_pool,
+            processor=processor,
+            is_dino=is_dino,
+            max_batch=args.max_batch_size,
+            batch_timeout_s=args.batch_timeout_ms / 1000.0,
+            preprocess_workers=args.preprocess_workers,
+            buckets=buckets,
+        )
+        server.warm(payloads[0], buckets, 3 if args.compile else 1, log)
     else:
         processor = hub.load_cached(
             AutoImageProcessor.from_pretrained,
@@ -1012,7 +1395,11 @@ def main():
     # Bind the monitor to the exact GPU torch chose, by UUID - see
     # ResourceSampler._find_by_uuid for why index-based lookup is wrong here.
     gpu_uuid = None
-    if args.device == "cuda" and not args.selftest:
+    gpu_uuids = None
+    if replica_pool is not None:
+        gpu_uuids = list(dict.fromkeys(
+            st["gpu_uuid"] for st in replica_pool.settings if st.get("gpu_uuid")))
+    elif args.device == "cuda" and not args.selftest:
         gpu_uuid = getattr(
             torch.cuda.get_device_properties(torch.cuda.current_device()),
             "uuid",
@@ -1022,7 +1409,8 @@ def main():
     sampler = None
     if not args.no_resource_monitor:
         sampler = ResourceSampler(
-            args.sample_interval_ms / 1000.0, gpu_uuid=gpu_uuid, log=log
+            args.sample_interval_ms / 1000.0, gpu_uuid=gpu_uuid,
+            gpu_uuids=gpu_uuids, log=log
         )
         log(f"Monitor    : host={'psutil' if sampler.proc else 'off'} "
             f"device={sampler.gpu_name or 'off'} "
@@ -1050,9 +1438,13 @@ def main():
             f"p95={res.get('p95_ms', float('nan')):8.1f}  "
             f"p99={res.get('p99_ms', float('nan')):8.1f} ms  "
             f"batch={res.get('mean_batch', 0):5.1f}  "
-            f"cpu={res.get('cpu_cores_busy_mean', float('nan')):5.1f}c  "
+            f"cpu={res.get(cpu_key, float('nan')):5.1f}c  "
             f"gpu={res.get('gpu_util_pct_mean', float('nan')):5.1f}%  "
             f"{'PASS' if res['passed'] else 'FAIL'}  {res['reason']}")
+        if replica_pool is not None:
+            total = sum(server.served) or 1
+            log("           routed: " + "  ".join(
+                f"r{i}={n} ({100 * n / total:.0f}%)" for i, n in enumerate(server.served)))
         return res
 
     async def driver():
@@ -1095,6 +1487,8 @@ def main():
     finally:
         if sampler is not None:
             sampler.stop()
+        if replica_pool is not None:
+            replica_pool.close()
 
     log("")
     log("=== RESULT ===")
@@ -1147,6 +1541,10 @@ def main():
         log(f"  mean_batch_size       : {best_res['mean_batch']:.2f}")
         log(f"  queue_depth_max       : {best_res['queue_depth_max']}")
         log(f"  p95_drift             : x{best_res['p95_drift']:.3f}")
+        log(f"  p50_drift             : x{best_res['p50_drift']:.3f}")
+        log(f"  service_capacity_qps  : {best_res['capacity_qps']:.2f}")
+        log(f"  capacity_bound_by     : {best_res['capacity_bound_by']}")
+        log(f"  rho_measured          : {best_res['rho_measured']:.3f}")
         log("")
         # The split that says WHY this level is the ceiling. If queue_wait
         # dominates, the batching knobs are binding; if preprocess dominates,
