@@ -13,6 +13,9 @@ MODELS = [
     "PixArt-alpha/PixArt-Sigma-XL-2-1024-MS",
     "stabilityai/stable-diffusion-3.5-medium",
     "stabilityai/stable-diffusion-3.5-large",
+    # A UNet, not a DiT - kept as the pre-DiT reference point. Its denoiser is
+    # pipe.unet rather than pipe.transformer; see denoiser() below.
+    "stabilityai/stable-diffusion-xl-base-1.0",
 ]
 
 # Models that need something beyond `pip install -r requirements.txt` before
@@ -34,6 +37,21 @@ UNSUPPORTED = {
         "and benchmark it there."
     ),
 }
+
+
+def denoiser(pipe):
+    """(attribute name, module) of a pipeline's denoising network.
+
+    The DiT pipelines (Sana, PixArt, SD3.5) call it `transformer`; UNet
+    pipelines (SDXL) call it `unet`. --compile and --quant target this module
+    and nothing else, so the attribute has to follow the architecture rather
+    than assume a transformer.
+    """
+    for name in ("transformer", "unet"):
+        module = getattr(pipe, name, None)
+        if module is not None:
+            return name, module
+    raise RuntimeError(f"{type(pipe).__name__} has neither a transformer nor a unet")
 
 
 def load_prompts(n):

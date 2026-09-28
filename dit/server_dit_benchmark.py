@@ -173,7 +173,7 @@ import torch
 
 from common import hostinfo, quantize, resources, sweep
 from common.util import percentile, slope
-from dit.dit_common import GATED, MODELS, UNSUPPORTED, load_prompts
+from dit.dit_common import GATED, MODELS, UNSUPPORTED, denoiser, load_prompts
 
 OUTPUT_DIR = OUTPUT_ROOT / "server_dit_output"
 
@@ -426,10 +426,12 @@ def _replica(conn, cfg, _payload):
         return
     pipe.set_progress_bar_config(disable=True)
 
+    # transformer for the DiTs, unet for SDXL.
+    den_name, den_module = denoiser(pipe)
     quantised = skipped = 0
     if cfg["quant"] != "none":
-        quantize.apply(pipe.transformer, cfg["quant"])
-        quantised, skipped = quantize.count(pipe.transformer)
+        quantize.apply(den_module, cfg["quant"])
+        quantised, skipped = quantize.count(den_module)
 
     # PixArt-Sigma predates callback_on_step_end and swallows it into **kwargs
     # without calling it, so it needs the legacy per-step callback instead.
@@ -545,8 +547,8 @@ def _replica(conn, cfg, _payload):
 
     compiled = False
     if cfg["compile"] and not offloaded:
-        pipe.transformer = _torch.compile(
-            pipe.transformer, mode="reduce-overhead" if is_cuda else None)
+        setattr(pipe, den_name, _torch.compile(
+            getattr(pipe, den_name), mode="reduce-overhead" if is_cuda else None))
         compiled = True
 
     started = {
@@ -555,6 +557,7 @@ def _replica(conn, cfg, _payload):
         "offloaded": offloaded,
         "compiled": compiled,
         "compile_skipped": cfg["compile"] and not compiled,
+        "denoiser": den_name,
         "threads": _torch.get_num_threads(),
         "interop": _torch.get_num_interop_threads(),
         "cores": (len(_os.sched_getaffinity(0))
@@ -1351,7 +1354,7 @@ class DiffusersBackend:
         if self.args.device == "cuda":
             placements = sorted({s["placement"] for s in settings})
             self.log(f"GPU placement: {' | '.join(placements)}")
-        compile_state = ("enabled (torch.compile on the transformer submodule)"
+        compile_state = (f"enabled (torch.compile on the {first['denoiser']} submodule)"
                          if first["compiled"] else
                          "requested but skipped (CPU offload is active)"
                          if first["compile_skipped"] else "disabled")

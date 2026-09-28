@@ -1,0 +1,67 @@
+Timestamp  : 20260928_120642
+Script     : server_dit
+Backend    : diffusers
+Model      : PixArt-alpha/PixArt-Sigma-XL-2-1024-MS
+Dataset    : byliutao/coco2014val_10k (prompts)
+Device     : cpu
+Server     : ThinkSystem SR630 V4
+CPU        : Intel(R) Xeon(R) 6740P
+CPU cores  : 96 logical, 96 physical, 2 sockets
+GPU        : NVIDIA L4 x2
+Dtype      : bfloat16
+Resolution : 1024x1024
+Steps      : 20
+Seed       : 42
+Quant      : disabled
+Replicas   : 4
+Devices    : cpu
+CPU bind   : 0-95
+Threads    : 24
+Batch size : 1 (max)
+Batch wait : 0 ms
+Workload   : interactive
+Think time : 30 s
+SLA        : p95 end-to-end <= 30 s
+Drop after : 2x SLA queued (60 s)
+Requests   : 100 scored + 10 warmup per level
+Calibrate  : 5 generations per replica
+Early stop : enabled
+Compile    : enabled (torch.compile on the transformer submodule)
+  replica 0: cpu, 24 intra-op threads, 24 cores visible, cpu
+  replica 1: cpu, 24 intra-op threads, 24 cores visible, cpu
+  replica 2: cpu, 24 intra-op threads, 24 cores visible, cpu
+  replica 3: cpu, 24 intra-op threads, 24 cores visible, cpu
+  replica 0: warmed batch 1..1 in 99 s
+  replica 1: warmed batch 1..1 in 102 s
+  replica 2: warmed batch 1..1 in 103 s
+  replica 3: warmed batch 1..1 in 103 s
+
+=== CALIBRATION (batch 1, sequential, per replica) ===
+  replica 0: service mean 37.562 s  text 0.970  denoise 32.488  decode 4.100  jpeg 0.004
+  replica 1: service mean 37.956 s  text 0.984  denoise 32.726  decode 4.243  jpeg 0.003
+  replica 2: service mean 40.463 s  text 0.939  denoise 35.152  decode 4.368  jpeg 0.004
+  replica 3: service mean 40.664 s  text 1.073  denoise 35.327  decode 4.261  jpeg 0.003
+  service_mean_s      : 39.161
+  service_p95_s       : 40.878
+  service_cv2         : 0.0014
+  mu_rps              : 0.1021  (6.13 req/min, batch 1, all replicas)
+  images saved to     : /home/lhe4/vit_dit_first_cut/output_SR630_6740_L4/server_dit_output/server_dit_PixArt-alpha_PixArt-Sigma-XL-2-1024-MS_bfloat16_cpu4r_20260928_120642_images
+Monitor    : host=psutil device=off cpu_power=rapl every 1000 ms
+
+=== SWEEP ===
+skipped: calibration p95 service time 40.88 s already exceeds the 30 s SLA, so no arrival rate can pass (--force-sweep to measure anyway)
+
+=== RESULT ===
+sla_seconds             : 30
+sla_percentile          : 95
+workload                : interactive
+calibrated_mu_rps       : 0.10214
+calibrated_service_s    : 39.1612
+replica_rss_gib_max     : 19.36
+max_qps                 : 0
+max_requests_per_minute : 0
+max_concurrent_users    : 0
+verdict                 : SLA unmet at every level tried
+
+=== LADDER ===
+  req/min   rho   p50 s   p95 s   p99 s  mean s  pred s  img/min attain% drop batch qmax  cores  gpu%      W  verdict

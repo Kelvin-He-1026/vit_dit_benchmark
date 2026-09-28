@@ -55,7 +55,7 @@ from huggingface_hub.errors import GatedRepoError
 
 from common import hostinfo, hub, quantize, resources, sweep
 from common.util import sync
-from dit.dit_common import MODELS, UNSUPPORTED, load_prompts
+from dit.dit_common import MODELS, UNSUPPORTED, denoiser, load_prompts
 
 OUTPUT_DIR = OUTPUT_ROOT / "dit_output"
 
@@ -259,11 +259,13 @@ def _dit_replica(conn, cfg, prompts):
     # are left alone: they are a small share of the time (see the denoise split
     # this reports) and the VAE in particular is where 8-bit shows up as
     # visible artefacts.
+    # transformer for the DiTs, unet for SDXL.
+    den_name, den_module = denoiser(pipe)
     quantised = skipped = 0
     if cfg["quant"] != "none":
         from common import quantize as _quantize
-        _quantize.apply(pipe.transformer, cfg["quant"])
-        quantised, skipped = _quantize.count(pipe.transformer)
+        _quantize.apply(den_module, cfg["quant"])
+        quantised, skipped = _quantize.count(den_module)
 
     try:
         pipe = pipe.to(device)
@@ -279,9 +281,9 @@ def _dit_replica(conn, cfg, prompts):
             f"--height/--width.")})
         return
     if cfg["compile"]:
-        pipe.transformer = _torch.compile(
-            pipe.transformer,
-            mode="reduce-overhead" if device.startswith("cuda") else None)
+        setattr(pipe, den_name, _torch.compile(
+            getattr(pipe, den_name),
+            mode="reduce-overhead" if device.startswith("cuda") else None))
 
     def sync():
         if device.startswith("cuda"):
@@ -717,9 +719,10 @@ def main():
             f"https://huggingface.co/{args.model} (access is auto-granted), then "
             f"make sure `hf auth login` has been run."
         ) from None
-    loaded_dtype = next(pipe.transformer.parameters()).dtype
+    den_name, den_module = denoiser(pipe)
+    loaded_dtype = next(den_module.parameters()).dtype
     if loaded_dtype != dtype:
-        log(f"WARNING    : requested {dtype} but transformer loaded as {loaded_dtype}")
+        log(f"WARNING    : requested {dtype} but {den_name} loaded as {loaded_dtype}")
     log(f"Loaded as  : {loaded_dtype}")
     pipe.set_progress_bar_config(disable=True)
 
@@ -786,11 +789,11 @@ def main():
             "compiled graph specialized to one device would be invalidated "
             "every time the transformer moves between CPU and GPU)")
     elif args.compile:
-        pipe.transformer = torch.compile(
-            pipe.transformer,
+        setattr(pipe, den_name, torch.compile(
+            getattr(pipe, den_name),
             mode="reduce-overhead" if args.device == "cuda" else None,
-        )
-        log("Compile    : enabled (torch.compile on the transformer submodule)")
+        ))
+        log(f"Compile    : enabled (torch.compile on the {den_name} submodule)")
         trial_generation()  # triggers/absorbs the one-time compile trace, not timed
     else:
         log("Compile    : disabled")

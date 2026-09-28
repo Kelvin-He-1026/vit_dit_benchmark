@@ -1,0 +1,55 @@
+Timestamp  : 20260926_132017
+Script     : server_vit_benchmark
+Model      : facebook/dinov2-giant
+Dataset    : ILSVRC/imagenet-1k
+Device     : cpu
+Server     : ThinkSystem SR630 V4
+CPU        : Intel(R) Xeon(R) 6740P
+CPU cores  : 96 logical, 96 physical, 2 sockets
+GPU        : NVIDIA L4 x2
+Dtype      : bfloat16
+Quant      : disabled
+Workload   : interactive
+Think time : 5 s
+SLA        : p95 end-to-end <= 100 ms
+Batch size : 32 (max)
+Batch wait : 5 ms
+Pre workers: 4
+Samples    : 256
+Warmup     : 5 s per level
+Measure    : 120 s per level
+Seed       : 42
+Compile    : disabled
+Processor  : slow
+Replicas   : 4
+Devices    : cpu
+CPU bind   : 0-39,48-87, split between replicas
+Threads    : 20 per replica
+Parent     : 16 cores the replicas leave free (preprocessing + scheduling)
+Self-test  : disabled
+Payloads   : 256 JPEGs, 67.4 KiB avg
+  replica 0: cpu, 20 intra-op threads, 20 cores visible
+  replica 1: cpu, 20 intra-op threads, 20 cores visible
+  replica 2: cpu, 20 intra-op threads, 20 cores visible
+  replica 3: cpu, 20 intra-op threads, 20 cores visible
+Warmed buckets: 1,2,4,8,16,32 x1 on 4 replicas
+Monitor    : host=psutil device=off every 250 ms
+
+=== SWEEP (req/s) ===
+[    1.00 req/s] n=   121  p50=  224.2  p95=   236.1  p99=   244.8 ms  batch=  1.0  cpu=  2.5c  gpu=  nan%  FAIL  p95 236.1 ms > 100 ms
+           routed: r0=32 (25%)  r1=32 (25%)  r2=31 (24%)  r3=32 (25%)
+[    0.50 req/s] n=    67  p50=  221.9  p95=   233.4  p99=   239.6 ms  batch=  1.0  cpu=  1.4c  gpu=  nan%  FAIL  p95 233.4 ms > 100 ms
+           routed: r0=18 (25%)  r1=18 (25%)  r2=18 (25%)  r3=17 (24%)
+
+=== RESULT ===
+sla_ms                  : 100
+sla_seconds             : 0.1000
+sla_percentile          : 95
+workload                : interactive
+max_concurrent_users    : 0
+max_qps                 : 0
+verdict                 : SLA unmet at every level tried; this cell cannot serve a single user inside the budget
+
+=== LADDER ===
+        1.00 req/s   p95=   236.15 ms  n=   121  FAIL  p95 236.1 ms > 100 ms
+        0.50 req/s   p95=   233.43 ms  n=    67  FAIL  p95 233.4 ms > 100 ms
