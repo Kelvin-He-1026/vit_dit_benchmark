@@ -1,0 +1,53 @@
+Timestamp  : 20260928_145731
+Device     : cpu
+Server     : ThinkSystem SR630 V4
+CPU        : Intel(R) Xeon(R) 6740P
+CPU cores  : 96 logical, 96 physical, 2 sockets
+GPU        : NVIDIA L4 x2
+Samples    : 30
+Resolution : 1024x1024
+Steps      : 20
+Warmup     : 1 untimed generation per cell
+Seed       : 42
+TF32       : disabled (matmul_precision=highest)
+Mode       : offline throughput sweep (no SLA, no arrival model)
+Batch size : sweep 1,2
+Replicas   : sweep 2,4
+Precisions : sweep bf16
+Measure    : 120 s per cell (floor; a generation is never cut short)
+Model      : stabilityai/stable-diffusion-3.5-large
+Dtype      : bfloat16
+Quant      : disabled
+Compile    : enabled
+Devices    : cpu
+Threads    : 24 per replica
+
+=== SWEEP (images/s) ===
+replicas  batch     img/s    s/img  steps/s  denoise%   gpu%    gpuW  cores    cpuW   img/s/W
+       2      1     0.008   237.11     0.17     194.5      -       -   41.0   360.6     0.000
+       2      2     0.011   178.38     0.22     194.4      -       -   40.7  1110.5     0.000
+       4      1     0.016   250.57     0.32     386.1      -       -   79.6   458.5     0.000
+       4      2     0.022   184.65     0.43     388.9      -       -   79.6  1200.5     0.000
+
+=== RESULT ===
+images_per_second   : 0.021662
+avg_seconds_per_image: 184.6549
+denoising_steps_per_s: 0.433
+best_batch_size         : 2
+best_replicas           : 4
+images                  : 8
+measured_s              : 369.310
+denoise_s_per_image     : 718.0697
+other_s_per_image       : -533.4148
+denoise_pct             : 388.9
+
+at the best cell:
+  sys_cores_busy_mean   : 79.63
+  sys_cores_busy_max    : 95.52
+  sys_cpu_pct_mean      : 83.0
+  cpu_power_w_mean      : 1200.5
+  cpu_logical_count     : 96
+
+  power_w_mean          : 1200.5
+  power_source          : cpu RAPL package
+  images_per_second_per_w: 0.000018
