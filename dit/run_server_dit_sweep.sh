@@ -17,7 +17,7 @@
 # BACKEND=vllm runs the same GPU cells through a vLLM-Omni server instead of
 # diffusers pipelines (see BACKENDS in dit/server_dit_benchmark.py). vLLM-Omni
 # has no CPU platform, so the CPU blocks are skipped, and batch 2 only runs for
-# the models it batches natively (SD3.5); Sana and PixArt go through its
+# the models it batches natively (SD3.5); Sana, Sana-Sprint and PixArt go through its
 # diffusers adapter, which is batch 1 by construction.
 #
 #   BACKEND=vllm nohup bash dit/run_server_dit_sweep.sh > /dev/null 2>&1 &
@@ -53,13 +53,17 @@ VLLM_BATCHING_MODELS=" stabilityai/stable-diffusion-3.5-medium stabilityai/stabl
 # bf16 with or without it); the harness refuses these rather than mislabel.
 VLLM_NO_FP8_MODELS="$VLLM_BATCHING_MODELS"
 
-COMMON=(--steps 20 --height 1024 --width 1024 --seed 42 --prompts 1000
+# No --steps: each model runs at its own default (20; Sana-Sprint 4), see
+# MODEL_STEPS in dit/dit_common.py.
+COMMON=(--height 1024 --width 1024 --seed 42 --prompts 1000
         --sla-s 30 --sla-percentile 95 --think-time-s 30
         --warmup-requests 10 --calibrate 5 --save-images 2)
 
 CPU_MODELS=(
   Efficient-Large-Model/Sana_600M_1024px_diffusers
   Efficient-Large-Model/Sana_1600M_1024px_diffusers
+  Efficient-Large-Model/Sana_Sprint_0.6B_1024px_diffusers
+  Efficient-Large-Model/Sana_Sprint_1.6B_1024px_diffusers
   PixArt-alpha/PixArt-Sigma-XL-2-1024-MS
   stabilityai/stable-diffusion-3.5-medium
 )

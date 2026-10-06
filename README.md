@@ -63,6 +63,9 @@ datasets, the HF cache and results stay at the repo root, as before.
 ```bash
 python -m vit.vit_benchmark --model google/vit-base-patch16-224 --samples 200 --batch-size 8 --device cpu
 python -m vit.vit_benchmark --model google/vit-large-patch16-224 --samples 200 --batch-size 8 --device cpu
+python -m vit.vit_benchmark --model microsoft/swin-base-patch4-window7-224 --samples 200 --batch-size 8 --device cpu
+python -m vit.vit_benchmark --model facebook/dinov2-base --samples 200 --batch-size 8 --device cpu
+python -m vit.vit_benchmark --model facebook/dinov2-large --samples 200 --batch-size 8 --device cpu
 python -m vit.vit_benchmark --model facebook/dinov2-giant --samples 200 --batch-size 8 --device cpu
 ```
 
@@ -155,10 +158,14 @@ Start small because 1024x1024 CPU generation can be slow:
 ```bash
 python -m dit.dit_benchmark --model Efficient-Large-Model/Sana_600M_1024px_diffusers --samples 3 --device cpu
 python -m dit.dit_benchmark --model Efficient-Large-Model/Sana_1600M_1024px_diffusers --samples 3 --device cpu
+python -m dit.dit_benchmark --model Efficient-Large-Model/Sana_Sprint_0.6B_1024px_diffusers --samples 3 --device cpu
+python -m dit.dit_benchmark --model Efficient-Large-Model/Sana_Sprint_1.6B_1024px_diffusers --samples 3 --device cpu
 python -m dit.dit_benchmark --model PixArt-alpha/PixArt-Sigma-XL-2-1024-MS --samples 3 --device cpu
 ```
 
-The DiT script uses 20 denoising steps and 1024x1024 by default.
+The DiT scripts default to 1024x1024 and 20 denoising steps, except the
+step-distilled Sana-Sprint models, which default to 4. `--steps` overrides
+either.
 
 ### Serving capacity
 
@@ -247,7 +254,7 @@ i.e. one that was interrupted.
 ViT:
 - images_per_second
 - avg_forward_ms_per_image
-- top1_accuracy for ViT-B/L
+- top1_accuracy for ViT-B/L and Swin-B
 - DINOv2 is measured as feature-extractor throughput only
 
 DiT:

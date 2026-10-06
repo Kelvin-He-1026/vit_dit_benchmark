@@ -137,8 +137,20 @@ def check(recipe, device, dtype_name):
 SKIP_SUFFIXES = ("classifier", "head", "pooler.dense")
 
 
-def _quantisable(module, fqn):
-    return isinstance(module, torch.nn.Linear) and not fqn.endswith(SKIP_SUFFIXES)
+# fp8 only: torchao 0.18 recognises its blockwise-128 fp8 weights by
+# block_size == (128, 128), and a per-tensor weight's block_size is its own
+# shape - so a 128 -> 128 nn.Linear is mistaken for a blockwise one and its
+# forward dies demanding a matching activation:
+#   AssertionError: input_tensor must be 1x128 scaled
+# Swin-B's first stage is 128 wide, which puts 8 such layers (query, key,
+# value and the attention output of its two blocks) on that path. They stay at
+# --dtype; none of the other models here has a 128 x 128 Linear.
+_FP8_AMBIGUOUS_SHAPE = (128, 128)
+
+
+def _skipped(module, fqn, recipe):
+    return fqn.endswith(SKIP_SUFFIXES) or (
+        recipe == "fp8" and tuple(module.weight.shape) == _FP8_AMBIGUOUS_SHAPE)
 
 
 def apply(model, recipe):
@@ -157,11 +169,12 @@ def apply(model, recipe):
     )
     config = (Int8DynamicActivationInt8WeightConfig() if recipe == "int8"
               else Float8DynamicActivationFloat8WeightConfig())
-    quantize_(model, config, filter_fn=_quantisable)
+    quantize_(model, config, filter_fn=lambda module, fqn: (
+        isinstance(module, torch.nn.Linear) and not _skipped(module, fqn, recipe)))
     return model
 
 
-def count(model):
+def count(model, recipe=None):
     """(quantised, left alone) nn.Linear counts.
 
     Reported by vit_benchmark.py's replicas at startup, so a run's own log
@@ -169,5 +182,5 @@ def count(model):
     """
     linears = [(fqn, m) for fqn, m in model.named_modules()
                if isinstance(m, torch.nn.Linear)]
-    skipped = sum(1 for fqn, _ in linears if fqn.endswith(SKIP_SUFFIXES))
+    skipped = sum(1 for fqn, m in linears if _skipped(m, fqn, recipe))
     return len(linears) - skipped, skipped

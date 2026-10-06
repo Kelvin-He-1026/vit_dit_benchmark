@@ -25,7 +25,9 @@ the test machine.
 Models:
   1) Efficient-Large-Model/Sana_600M_1024px_diffusers
   2) Efficient-Large-Model/Sana_1600M_1024px_diffusers
-  3) PixArt-alpha/PixArt-Sigma-XL-2-1024-MS
+  3) Efficient-Large-Model/Sana_Sprint_0.6B_1024px_diffusers  (4 steps)
+  4) Efficient-Large-Model/Sana_Sprint_1.6B_1024px_diffusers  (4 steps)
+  5) PixArt-alpha/PixArt-Sigma-XL-2-1024-MS
 
 Prompt dataset:
   byliutao/coco2014val_10k -> test.txt (COCO 2014 validation captions)
@@ -55,7 +57,8 @@ from huggingface_hub.errors import GatedRepoError
 
 from common import hostinfo, hub, quantize, resources, sweep
 from common.util import sync
-from dit.dit_common import MODELS, UNSUPPORTED, denoiser, load_prompts
+from dit.dit_common import (MODELS, UNSUPPORTED, denoiser, load_prompts,
+                            step_kwargs, steps_for)
 
 OUTPUT_DIR = OUTPUT_ROOT / "dit_output"
 
@@ -64,7 +67,11 @@ def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--model", choices=MODELS, default=MODELS[0])
     p.add_argument("--samples", type=int, default=10)
-    p.add_argument("--steps", type=int, default=20)
+    p.add_argument(
+        "--steps", type=int, default=None,
+        help="Denoising steps. Default: per model - 20, except the "
+        "step-distilled Sana-Sprint models, which run at 4.",
+    )
     p.add_argument("--height", type=int, default=1024)
     p.add_argument("--width", type=int, default=1024)
     p.add_argument("--warmup", type=int, default=3)
@@ -236,6 +243,7 @@ def _dit_replica(conn, cfg, prompts):
     from diffusers import DiffusionPipeline
 
     from common import hub as _hub
+    from dit.dit_common import step_kwargs as _step_kwargs
 
     _torch.set_num_threads(cfg["threads"])
     try:
@@ -265,7 +273,7 @@ def _dit_replica(conn, cfg, prompts):
     if cfg["quant"] != "none":
         from common import quantize as _quantize
         _quantize.apply(den_module, cfg["quant"])
-        quantised, skipped = _quantize.count(den_module)
+        quantised, skipped = _quantize.count(den_module, cfg["quant"])
 
     try:
         pipe = pipe.to(device)
@@ -319,7 +327,8 @@ def _dit_replica(conn, cfg, prompts):
             with _torch.inference_mode():
                 pipe(batch, num_inference_steps=steps,
                      height=cmd["height"], width=cmd["width"],
-                     generator=generator, callback_on_step_end=on_step)
+                     generator=generator, callback_on_step_end=on_step,
+                     **_step_kwargs(cfg["model"], steps))
             sync()
             wall = time.perf_counter() - t0
             # First callback fires after step 1, so the loop started one step
@@ -360,11 +369,11 @@ def _dit_replica(conn, cfg, prompts):
     conn.send({"stopped": True})
 
 
-def dit_cell(workers, n_replicas, bs, args, sampler):
+def dit_cell(workers, n_replicas, bs, steps, args, sampler):
     """One (replicas, batch size) cell. Returns a record, or None if it OOMed."""
     conns = workers.conns[:n_replicas]
     for conn in conns:
-        conn.send({"bs": bs, "steps": args.steps, "height": args.height,
+        conn.send({"bs": bs, "steps": steps, "height": args.height,
                    "width": args.width, "measure_s": args.measure_s})
     ready = [conn.recv() for conn in conns]
     if any("oom" in r for r in ready):
@@ -388,7 +397,7 @@ def dit_cell(workers, n_replicas, bs, args, sampler):
         "batch_size": bs,
         "images_per_second": rate,
         "s_per_image": elapsed * n_replicas / images,
-        "steps_per_second": images * args.steps / elapsed,
+        "steps_per_second": images * steps / elapsed,
         # Per generated image, so it is comparable across batch sizes.
         "denoise_s_per_image": denoise_s * n_replicas / images,
         "images": images,
@@ -435,6 +444,7 @@ def run_throughput(args, prompts, timestamp, header, log):
     sampler.start()
     try:
         for model_name in models:
+            steps = steps_for(model_name, args.steps)
             for dtype_name, quant in precisions:
                 tag = sweep.precision_tag(dtype_name, quant)
                 try:
@@ -465,7 +475,7 @@ def run_throughput(args, prompts, timestamp, header, log):
 
                 log("")
                 log(f"--- {model_name} @ {tag} "
-                    f"({args.width}x{args.height}, {args.steps} steps, "
+                    f"({args.width}x{args.height}, {steps} steps, "
                     f"devices={','.join(devices)}, "
                     f"compile={'on' if args.compile else 'off'})")
                 log(f"{'replicas':>8} {'batch':>6} {'img/s':>9} {'s/img':>8} "
@@ -485,7 +495,7 @@ def run_throughput(args, prompts, timestamp, header, log):
                 try:
                     for n_replicas in replica_counts:
                         for bs in batch_sizes:
-                            cell = dit_cell(workers, n_replicas, bs, args, sampler)
+                            cell = dit_cell(workers, n_replicas, bs, steps, args, sampler)
                             if cell is None:
                                 log(f"{n_replicas:>8} {bs:>6}  skipped - out of "
                                     f"GPU memory at this batch/replica count")
@@ -541,6 +551,7 @@ def write_combination(args, header, model_name, dtype_name, quant, rows, best,
     """One result file per combination, in the shape consolidation expects."""
     lines = list(header)
     lines.append(f"Model      : {model_name}")
+    lines.append(f"Steps      : {steps_for(model_name, args.steps)}")
     lines.append(f"Dtype      : {dtype_name}")
     lines.append(f"Quant      : {quantize.describe(quant)}")
     lines.append(f"Compile    : {'enabled' if args.compile else 'disabled'}")
@@ -666,7 +677,11 @@ def main():
         log(f"Dtype      : {args.dtype}")
     log(f"Samples    : {args.samples}")
     log(f"Resolution : {args.width}x{args.height}")
-    log(f"Steps      : {args.steps}")
+    if not args.throughput:
+        # A sweep can mix models with different defaults (Sana-Sprint runs at
+        # 4), so there each combination's file carries its own Steps line.
+        args.steps = steps_for(args.model, args.steps)
+        log(f"Steps      : {args.steps}")
     log(f"Warmup     : {args.warmup}" if not args.throughput
         else "Warmup     : 1 untimed generation per cell")
     log(f"Seed       : {args.seed}")
@@ -740,6 +755,7 @@ def main():
                 height=args.height,
                 width=args.width,
                 generator=generator,
+                **step_kwargs(args.model, args.steps),
             ).images[0]
         sync(args.device)
 
@@ -811,6 +827,7 @@ def main():
                 height=args.height,
                 width=args.width,
                 generator=generator,
+                **step_kwargs(args.model, args.steps),
             ).images[0]
         sync(args.device)
 
@@ -830,6 +847,7 @@ def main():
                 height=args.height,
                 width=args.width,
                 generator=generator,
+                **step_kwargs(args.model, args.steps),
             ).images[0]
             sync(args.device)
 

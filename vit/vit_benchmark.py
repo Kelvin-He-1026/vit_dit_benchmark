@@ -23,7 +23,10 @@ OFFLINE THROUGHPUT (--throughput)
 Models:
   1) google/vit-base-patch16-224
   2) google/vit-large-patch16-224
-  3) facebook/dinov2-giant
+  3) microsoft/swin-base-patch4-window7-224
+  4) facebook/dinov2-base
+  5) facebook/dinov2-large
+  6) facebook/dinov2-giant
 
 Dataset:
   ILSVRC/imagenet-1k validation split (Hugging Face, gated)
@@ -370,7 +373,7 @@ def _replica_main(conn, cfg, pool):
         if device.startswith("cuda"):
             _torch.cuda.synchronize(device)
 
-    quantised, skipped = _quantize.count(model) if cfg["quant"] != "none" else (0, 0)
+    quantised, skipped = _quantize.count(model, cfg["quant"]) if cfg["quant"] != "none" else (0, 0)
     conn.send({
         "started": True,
         "threads": _torch.get_num_threads(),

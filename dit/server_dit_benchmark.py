@@ -173,7 +173,8 @@ import torch
 
 from common import hostinfo, quantize, resources, sweep
 from common.util import percentile, slope
-from dit.dit_common import GATED, MODELS, UNSUPPORTED, denoiser, load_prompts
+from dit.dit_common import (GATED, MODELS, UNSUPPORTED, denoiser, load_prompts,
+                            step_kwargs, steps_for)
 
 OUTPUT_DIR = OUTPUT_ROOT / "server_dit_output"
 
@@ -214,7 +215,11 @@ def parse_args():
         "offload is active. Every batch size up to --max-batch-size is warmed "
         "so no compile lands inside a level.",
     )
-    p.add_argument("--steps", type=int, default=20)
+    p.add_argument(
+        "--steps", type=int, default=None,
+        help="Denoising steps. Default: per model - 20, except the "
+        "step-distilled Sana-Sprint models, which run at 4.",
+    )
     p.add_argument("--height", type=int, default=1024)
     p.add_argument("--width", type=int, default=1024)
     p.add_argument("--seed", type=int, default=42)
@@ -431,7 +436,7 @@ def _replica(conn, cfg, _payload):
     quantised = skipped = 0
     if cfg["quant"] != "none":
         quantize.apply(den_module, cfg["quant"])
-        quantised, skipped = quantize.count(den_module)
+        quantised, skipped = quantize.count(den_module, cfg["quant"])
 
     # PixArt-Sigma predates callback_on_step_end and swallows it into **kwargs
     # without calling it, so it needs the legacy per-step callback instead.
@@ -480,6 +485,7 @@ def _replica(conn, cfg, _payload):
                 width=cfg["width"],
                 generator=generators if len(generators) > 1 else generators[0],
                 output_type="pil",
+                **step_kwargs(cfg["model"], cfg["steps"]),
                 **kwargs,
             )
         sync()
@@ -1791,6 +1797,7 @@ class VllmBackend:
 
 def main():
     args = parse_args()
+    args.steps = steps_for(args.model, args.steps)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     if args.model in UNSUPPORTED:

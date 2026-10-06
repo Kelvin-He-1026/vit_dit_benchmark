@@ -9,6 +9,9 @@ from pathlib import Path
 MODELS = [
     "google/vit-base-patch16-224",
     "google/vit-large-patch16-224",
+    "microsoft/swin-base-patch4-window7-224",
+    "facebook/dinov2-base",
+    "facebook/dinov2-large",
     "facebook/dinov2-giant",
 ]
 

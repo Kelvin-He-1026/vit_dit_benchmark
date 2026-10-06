@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Serving-capacity benchmark for ViT-B / ViT-L / DINOv2-giant.
+Serving-capacity benchmark for ViT-B / ViT-L / Swin-B / DINOv2-B/L/giant.
 
 Answers one question per (model, hardware) cell:
 
@@ -259,7 +259,7 @@ def parse_args():
         type=float,
         default=100.0,
         help="End-to-end latency budget per request in ms (default 100). "
-        "100 for ViT-B/ViT-L, 250 for DINOv2.",
+        "100 for ViT-B/ViT-L/Swin-B, 250 for DINOv2.",
     )
     s.add_argument("--sla-percentile", type=float, default=95.0)
 
@@ -303,7 +303,7 @@ def parse_args():
     m.add_argument(
         "--measure-s",
         type=float,
-        default=30.0,
+        default=120.0,
         help="Length of the measurement window in seconds (default 30). A p95 "
         "wants a few hundred in-window requests; the log reports how many it "
         "actually got.",

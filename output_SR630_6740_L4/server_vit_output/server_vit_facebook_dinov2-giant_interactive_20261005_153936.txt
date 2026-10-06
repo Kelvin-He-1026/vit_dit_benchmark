@@ -1,0 +1,63 @@
+Timestamp  : 20261005_153936
+Script     : server_vit_benchmark
+Model      : facebook/dinov2-giant
+Dataset    : ILSVRC/imagenet-1k
+Device     : cpu
+Server     : ThinkSystem SR630 V4
+CPU        : Intel(R) Xeon(R) 6740P
+CPU cores  : 96 logical, 96 physical, 2 sockets
+GPU        : NVIDIA L4 x2
+Dtype      : bfloat16
+Quant      : disabled
+Workload   : interactive
+Think time : 5 s
+SLA        : p95 end-to-end <= 250 ms
+Batch size : 16 (max)
+Batch wait : 5 ms
+Pre workers: 8
+Samples    : 256
+Warmup     : 5 s per level
+Measure    : 30 s per level
+Seed       : 42
+Compile    : disabled
+Processor  : slow
+Replicas   : 2
+Devices    : cpu
+CPU bind   : 0-37,48-79, split between replicas
+Threads    : 32 per replica
+Parent     : 2 cores the replicas leave free (preprocessing + scheduling)
+Self-test  : disabled
+Payloads   : 256 JPEGs, 67.4 KiB avg
+  replica 0: cpu, 32 intra-op threads, 35 cores visible
+  replica 1: cpu, 32 intra-op threads, 35 cores visible
+Warmed buckets: 1,2,4,8,16 x1 on 2 replicas
+Resource monitor: RAPL counters unreadable, CPU power disabled
+Monitor    : host=psutil device=off every 250 ms
+
+=== SWEEP (req/s) ===
+[    8.00 req/s] n=   214  p50=  463.2  p95=   695.8  p99=   815.6 ms  batch=  2.6  cpu= 27.0c  gpu=  nan%  FAIL  p95 695.8 ms > 250 ms
+           routed: r0=126 (48%)  r1=136 (52%)
+[    4.00 req/s] n=   114  p50=  433.1  p95=   649.0  p99=   673.9 ms  batch=  1.6  cpu= 20.5c  gpu=  nan%  FAIL  p95 649.0 ms > 250 ms
+           routed: r0=66 (47%)  r1=75 (53%)
+[    2.00 req/s] n=    61  p50=  410.6  p95=   587.7  p99=   661.7 ms  batch=  1.2  cpu= 12.3c  gpu=  nan%  FAIL  p95 587.7 ms > 250 ms
+           routed: r0=38 (50%)  r1=38 (50%)
+[    1.00 req/s] n=    32  p50=  402.9  p95=   567.6  p99=   607.0 ms  batch=  1.0  cpu=  6.8c  gpu=  nan%  FAIL  p95 567.6 ms > 250 ms
+           routed: r0=19 (50%)  r1=19 (50%)
+[    0.50 req/s] n=    20  p50=  400.9  p95=   406.6  p99=   419.7 ms  batch=  1.0  cpu=  4.3c  gpu=  nan%  FAIL  p95 406.6 ms > 250 ms
+           routed: r0=12 (50%)  r1=12 (50%)
+
+=== RESULT ===
+sla_ms                  : 250
+sla_seconds             : 0.2500
+sla_percentile          : 95
+workload                : interactive
+max_concurrent_users    : 0
+max_qps                 : 0
+verdict                 : SLA unmet at every level tried; this cell cannot serve a single user inside the budget
+
+=== LADDER ===
+        8.00 req/s   p95=   695.83 ms  n=   214  FAIL  p95 695.8 ms > 250 ms
+        4.00 req/s   p95=   648.98 ms  n=   114  FAIL  p95 649.0 ms > 250 ms
+        2.00 req/s   p95=   587.66 ms  n=    61  FAIL  p95 587.7 ms > 250 ms
+        1.00 req/s   p95=   567.62 ms  n=    32  FAIL  p95 567.6 ms > 250 ms
+        0.50 req/s   p95=   406.56 ms  n=    20  FAIL  p95 406.6 ms > 250 ms
