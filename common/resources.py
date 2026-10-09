@@ -64,7 +64,11 @@ class ResourceSample:
     t: float
     cpu_pct: float = float("nan")        # process, summed across cores
     sys_cpu_pct: float = float("nan")    # system-wide, 0-100
-    rss_gib: float = float("nan")
+    rss_gib: float = float("nan")        # this process only
+    # Child processes - the replicas. Each loads its own copy of the model,
+    # so this, not rss_gib, is where a multi-replica run's memory is.
+    child_rss_gib: float = float("nan")  # the largest single child
+    total_rss_gib: float = float("nan")  # this process plus every child
     threads: int = 0
     gpu_util_pct: float = float("nan")
     gpu_mem_util_pct: float = float("nan")
@@ -99,6 +103,8 @@ class ResourceSampler(threading.Thread):
         self.gpu_name = None
 
         self.proc = psutil.Process() if psutil is not None else None
+        self._children = []
+        self._children_age = 0
         if psutil is None:
             log("Resource monitor: psutil not installed, host metrics disabled")
 
@@ -153,6 +159,33 @@ class ResourceSampler(threading.Thread):
             self.proc.cpu_percent(None)
             psutil.cpu_percent(None)
 
+    def _child_rss(self):
+        """RSS in bytes of each live child process, descendants included.
+
+        The child list is rescanned every 20 samples rather than every one:
+        finding children means walking every pid on the machine, and replicas
+        are started once and then live for the whole run.
+
+        RSS counts a page in every process that maps it, so pages shared
+        between processes are counted more than once in the total. For
+        replicas that is small: each loads and converts its own weights, and
+        only the batch tensors in flight are shared.
+        """
+        if not self._children or self._children_age >= 20:
+            try:
+                self._children = self.proc.children(recursive=True)
+            except psutil.Error:
+                self._children = []
+            self._children_age = 0
+        self._children_age += 1
+        out = []
+        for child in self._children:
+            try:
+                out.append(child.memory_info().rss)
+            except psutil.Error:
+                continue
+        return out
+
     def _sample(self):
         s = ResourceSample(t=time.perf_counter())
         if self.proc is not None:
@@ -160,6 +193,10 @@ class ResourceSampler(threading.Thread):
             s.sys_cpu_pct = psutil.cpu_percent(None)
             s.rss_gib = self.proc.memory_info().rss / (1024 ** 3)
             s.threads = self.proc.num_threads()
+            child_rss = self._child_rss()
+            if child_rss:
+                s.child_rss_gib = max(child_rss) / (1024 ** 3)
+            s.total_rss_gib = s.rss_gib + sum(child_rss) / (1024 ** 3)
         if self.handles:
             try:
                 util, mem_util, mem_used, power, clock, temp = [], [], 0.0, 0.0, [], []
@@ -228,7 +265,8 @@ class ResourceSampler(threading.Thread):
             if peak:
                 out[f"{attr}_max"] = max(vals)
 
-        for f in ("cpu_pct", "sys_cpu_pct", "rss_gib", "gpu_util_pct",
+        for f in ("cpu_pct", "sys_cpu_pct", "rss_gib", "child_rss_gib",
+                  "total_rss_gib", "gpu_util_pct",
                   "gpu_mem_util_pct", "gpu_mem_used_gib", "gpu_power_w",
                   "gpu_sm_clock_mhz", "gpu_temp_c", "cpu_power_w"):
             agg(f)

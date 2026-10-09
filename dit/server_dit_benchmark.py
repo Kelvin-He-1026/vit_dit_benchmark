@@ -157,7 +157,6 @@ import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 
 if __package__ in (None, ""):
@@ -171,7 +170,7 @@ from common.paths import MODELS_DIR, OUTPUT_ROOT, REPO_ROOT, ensure_dirs
 
 import torch
 
-from common import hostinfo, quantize, resources, sweep
+from common import hostinfo, quantize, resources, sweep, util
 from common.util import percentile, slope
 from dit.dit_common import (GATED, MODELS, UNSUPPORTED, denoiser, load_prompts,
                             step_kwargs, steps_for)
@@ -196,6 +195,13 @@ def parse_args():
         "for DiT text-to-image pipelines."
     )
     p.add_argument("--model", choices=MODELS, default=MODELS[0])
+    p.add_argument(
+        "--run-code", default="",
+        help="A label of your choosing for this run or sweep, e.g. "
+        "'headroom-v2'. Written to the result header as 'Run code' and to "
+        "the consolidated CSV as run_code, so runs can be grouped by it. "
+        "Letters, digits, '.', '_' and '-' only.",
+    )
     p.add_argument(
         "--backend", choices=["diffusers", "vllm"], default="diffusers",
         help="What serves the requests: diffusers pipelines in worker "
@@ -1797,8 +1803,11 @@ class VllmBackend:
 
 def main():
     args = parse_args()
+    if args.run_code and not re.fullmatch(r"[A-Za-z0-9._-]+", args.run_code):
+        raise RuntimeError(
+            f"--run-code {args.run_code!r}: use letters, digits, '.', '_' and '-' only")
     args.steps = steps_for(args.model, args.steps)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = util.timestamp()
 
     if args.model in UNSUPPORTED:
         raise RuntimeError(f"{args.model} cannot run here.\n{UNSUPPORTED[args.model]}")
@@ -1835,6 +1844,8 @@ def main():
     image_dir = OUTPUT_DIR / f"{run_name}_images"
 
     log(f"Timestamp  : {timestamp}")
+    if args.run_code:
+        log(f"Run code   : {args.run_code}")
     log(f"Script     : {backend.file_prefix}")
     log(f"Backend    : {backend.runtime}")
     log(f"Model      : {args.model}")

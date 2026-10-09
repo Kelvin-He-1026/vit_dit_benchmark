@@ -4,6 +4,20 @@ Deliberately torch-free and numpy-free, so importing them costs nothing and
 pulls in no framework state (thread counts, CUDA context) as a side effect.
 """
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+# Result files are stamped in US Eastern time (EST/EDT as the calendar has
+# it), not the server's clock, which is UTC: the stamp is in every file name
+# and header, and is read by people in that zone. One definition, so every
+# harness and the sweep scripts (which export the same TZ) agree.
+OUTPUT_TZ = "America/New_York"
+
+
+def timestamp():
+    """Now, in OUTPUT_TZ, in the YYYYmmdd_HHMMSS form the file names use."""
+    return datetime.now(ZoneInfo(OUTPUT_TZ)).strftime("%Y%m%d_%H%M%S")
+
 
 def percentile(values, p):
     """Linear-interpolated percentile; no numpy dependency.

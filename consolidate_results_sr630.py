@@ -112,6 +112,7 @@ ARG_FIELDS = [
     "script",
     "runtime",
     "timestamp",
+    "run_code",
     "server",
     "cpu",
     "gpu",
@@ -153,6 +154,15 @@ ARG_FIELDS = [
     "pre_workers",
     "processor",
     "selftest",
+    # server_vit_benchmark.py core accounting: the launch affinity mask, one
+    # replica's pinned cores, what its threads leave idle, and the cores the
+    # harness keeps for preprocessing and scheduling.
+    "affinity",
+    "affinity_cores",
+    "affinity_per_socket",
+    "replica_cores",
+    "replica_spare_cores",
+    "parent_cores",
     # Offline throughput sweeps (vit_throughput, dit_throughput).
     "precisions_swept",
     "devices",
@@ -237,6 +247,17 @@ METRIC_FIELDS = [
     "preprocess_ms",
     "queue_wait_ms",
     "inference_ms",
+    # server_vit: the same stages as means (they sum to avg_ms_per_image),
+    # then each stage's own capacity and how busy it was at the winning level.
+    "harness_lag_mean_ms",
+    "preprocess_mean_ms",
+    "queue_wait_mean_ms",
+    "inference_mean_ms",
+    "inference_capacity_qps",
+    "preprocess_capacity_qps",
+    "inference_busy_s",
+    "inference_util",
+    "preprocess_util",
     # server_dit: ipc is p95; the four pipeline stages are means.
     "ipc_ms",
     "text_encode_ms",
@@ -261,6 +282,7 @@ METRIC_FIELDS = [
     "proc_cpu_pct_mean",
     "sys_cpu_pct_mean",
     "rss_gib_max",
+    "total_rss_gib_max",
     "threads_max",
     "gpu_util_pct_mean",
     "gpu_mem_util_pct_mean",
@@ -288,6 +310,7 @@ FIELDS = ARG_FIELDS + METRIC_FIELDS + PROVENANCE_FIELDS
 # "think_time_s : 5" in the result block.
 KEY_MAP = {
     "Timestamp": "timestamp",
+    "Run code": "run_code",
     "Runtime": "runtime",
     "Server": "server_sku",
     "CPU": "cpu_sku",
@@ -370,12 +393,23 @@ KEY_MAP = {
     "preprocess_ms": "preprocess_ms",
     "queue_wait_ms": "queue_wait_ms",
     "inference_ms": "inference_ms",
+    # server_vit_benchmark.py: stage means, and both stages' capacity.
+    "harness_lag_mean_ms": "harness_lag_mean_ms",
+    "preprocess_mean_ms": "preprocess_mean_ms",
+    "queue_wait_mean_ms": "queue_wait_mean_ms",
+    "inference_mean_ms": "inference_mean_ms",
+    "inference_capacity_qps": "inference_capacity_qps",
+    "preprocess_capacity_qps": "preprocess_capacity_qps",
+    "inference_busy_s": "inference_busy_s",
+    "inference_util": "inference_util",
+    "preprocess_util": "preprocess_util",
     "cpu_logical_count": "cpu_logical_count",
     "cpu_cores_busy_mean": "cpu_cores_busy_mean",
     "cpu_cores_busy_max": "cpu_cores_busy_max",
     "proc_cpu_pct_mean": "proc_cpu_pct_mean",
     "sys_cpu_pct_mean": "sys_cpu_pct_mean",
     "rss_gib_max": "rss_gib_max",
+    "total_rss_gib_max": "total_rss_gib_max",
     "threads_max": "threads_max",
     "gpu_util_pct_mean": "gpu_util_pct_mean",
     "gpu_mem_util_pct_mean": "gpu_mem_util_pct_mean",
@@ -396,6 +430,12 @@ KEY_MAP = {
     # server_dit_benchmark.py: header config. "Requests" holds two numbers
     # ("100 scored + 10 warmup per level") and is split in parse_file.
     "CPU bind": "cpu_bind",
+    "Affinity": "affinity",
+    "Aff cores": "affinity_cores",
+    "Aff/socket": "affinity_per_socket",
+    "Rep cores": "replica_cores",
+    "Rep spare": "replica_spare_cores",
+    "Parent": "parent_cores",
     "Drop after": "drop_after_factor",
     "Requests": "requests_raw",
     "Calibrate": "calibrate_generations",
@@ -446,7 +486,7 @@ KEY_MAP = {
 NUMERIC_FIELDS = {
     "batch_size", "warmup", "measure_s", "think_time_s", "batch_wait_ms",
     "pre_workers", "sla_ms", "p95_drift", "p50_drift", "drop_after_factor",
-    "calibrate_generations",
+    "calibrate_generations", "parent_cores",
 }
 REQUESTS_RE = re.compile(r"(\d+)\s+scored\s*\+\s*(\d+)\s+warmup")
 # "think_time= 15.0s" (users-by-think-time table) -> users_think_15s
@@ -608,8 +648,11 @@ PASSTHROUGH_METRICS = (
     "mean_batch_size", "queue_depth_max", "p95_drift", "p50_drift",
     "service_capacity_qps", "capacity_bound_by",
     "harness_lag_ms", "preprocess_ms", "queue_wait_ms", "inference_ms",
+    "harness_lag_mean_ms", "preprocess_mean_ms", "queue_wait_mean_ms",
+    "inference_mean_ms", "inference_capacity_qps", "preprocess_capacity_qps",
+    "inference_busy_s", "inference_util", "preprocess_util",
     "cpu_logical_count", "cpu_cores_busy_mean", "cpu_cores_busy_max",
-    "proc_cpu_pct_mean", "sys_cpu_pct_mean", "rss_gib_max", "threads_max",
+    "proc_cpu_pct_mean", "sys_cpu_pct_mean", "rss_gib_max", "total_rss_gib_max", "threads_max",
     "gpu_util_pct_mean", "gpu_mem_util_pct_mean", "gpu_mem_used_gib_max",
     "gpu_power_w_mean", "gpu_power_w_max", "gpu_sm_clock_mhz_mean",
     "gpu_temp_c_max",

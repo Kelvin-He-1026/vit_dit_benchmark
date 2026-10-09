@@ -13,6 +13,10 @@ MODELS = [
     "facebook/dinov2-base",
     "facebook/dinov2-large",
     "facebook/dinov2-giant",
+    # Not a transformer: the convolutional reference point (~25.6M parameters).
+    # Same dataset, processor plumbing and classifier head as the ViTs, so it
+    # runs through every harness unchanged.
+    "microsoft/resnet-50",
 ]
 
 DATASET_NAME = "ILSVRC/imagenet-1k"

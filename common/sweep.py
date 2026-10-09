@@ -96,6 +96,9 @@ PRECISIONS = {
     "bfloat16": ("bfloat16", "none"),
     "int8": ("bfloat16", "int8"),
     "fp8": ("bfloat16", "fp8"),
+    # Calibrated ahead of time and loaded from disk (common/quantize.py);
+    # CPU and ViT only.
+    "int8-static": ("bfloat16", "int8-static"),
 }
 
 
@@ -131,6 +134,37 @@ def parse_cores(spec):
         else:
             cores.append(int(part))
     return cores
+
+
+def core_ranges(cores):
+    """[0, 1, 2, 3, 8, 9] -> '0-3,8-9'. The inverse of parse_cores."""
+    out, cores = [], sorted(set(cores))
+    i = 0
+    while i < len(cores):
+        j = i
+        while j + 1 < len(cores) and cores[j + 1] == cores[j] + 1:
+            j += 1
+        out.append(str(cores[i]) if i == j else f"{cores[i]}-{cores[j]}")
+        i = j + 1
+    return ",".join(out)
+
+
+def cores_per_socket(cores):
+    """How many of `cores` sit on each socket, in socket order: [48, 32].
+
+    Read from sysfs rather than assumed from the core ids. Empty if the
+    topology is not exposed (non-Linux), so callers can just skip the line.
+    """
+    counts = {}
+    for c in cores:
+        try:
+            with open(f"/sys/devices/system/cpu/cpu{c}/topology/"
+                      f"physical_package_id", encoding="ascii") as fh:
+                socket = int(fh.read())
+        except (OSError, ValueError):
+            return []
+        counts[socket] = counts.get(socket, 0) + 1
+    return [counts[s] for s in sorted(counts)]
 
 
 def split_cores(cores, n):

@@ -106,13 +106,13 @@ import io
 import os
 import random
 import statistics
+import re
 import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
 
 if __package__ in (None, ""):
@@ -128,7 +128,7 @@ import torch
 from PIL import Image
 from transformers import AutoImageProcessor, AutoModel, AutoModelForImageClassification
 
-from common import hostinfo, hub, quantize, sweep
+from common import hostinfo, hub, quantize, sweep, util
 from common.util import percentile, slope
 from vit.vit_common import DATASET_NAME, MODELS, load_validation
 
@@ -153,11 +153,18 @@ def parse_args():
         description="Find max concurrent users meeting a p95 latency SLA.",
     )
     p.add_argument("--model", choices=MODELS, default=MODELS[0])
+    p.add_argument(
+        "--run-code", default="",
+        help="A label of your choosing for this run or sweep, e.g. "
+        "'headroom-v2'. Written to the result header as 'Run code' and to "
+        "the consolidated CSV as run_code, so runs can be grouped by it. "
+        "Letters, digits, '.', '_' and '-' only.",
+    )
     p.add_argument("--device", choices=["cpu", "cuda"], default="cpu")
     p.add_argument("--dtype", choices=["float32", "bfloat16"], default="float32")
     p.add_argument(
         "--quant",
-        choices=quantize.RECIPES,
+        choices=quantize.VIT_RECIPES,
         default="none",
         help="W8A8 post-training quantisation of every nn.Linear via torchao: "
         "'int8' (per-output-channel weight scales) or 'fp8' (e4m3, per-tensor, "
@@ -658,13 +665,18 @@ def _vit_replica(conn, cfg, _payload):
     try:
         if is_cuda:
             _torch.cuda.set_device(device)
-        cls = AutoModel if cfg["is_dino"] else AutoModelForImageClassification
-        model = _hub.load_cached(cls.from_pretrained, cfg["model"],
-                                 cache_dir=cfg["models_dir"])
-        model = model.to(device=device, dtype=dtype).eval()
-        model = _quantize.apply(model, cfg["quant"])
-        if cfg["compile"]:
-            model = _torch.compile(model, mode="reduce-overhead" if is_cuda else None)
+        if _quantize.is_static(cfg["quant"]):
+            # Calibrated ahead of time and saved; it arrives already compiled.
+            model = _quantize.load_static(cfg["model"], cfg["models_dir"], dtype)
+        else:
+            cls = AutoModel if cfg["is_dino"] else AutoModelForImageClassification
+            model = _hub.load_cached(cls.from_pretrained, cfg["model"],
+                                     cache_dir=cfg["models_dir"])
+            model = model.to(device=device, dtype=dtype).eval()
+            model = _quantize.apply(model, cfg["quant"])
+            if cfg["compile"]:
+                model = _torch.compile(
+                    model, mode="reduce-overhead" if is_cuda else None)
     except Exception as exc:  # noqa: BLE001 - the parent turns this into a message
         conn.send({"error": f"{type(exc).__name__}: {str(exc)[:300]}"})
         return
@@ -958,6 +970,13 @@ def score_level(records, depth_samples, t0, args, is_dino, sampler=None):
     out["queue_wait_p95_ms"] = 1000.0 * percentile([r.queue_wait_s for r in window], 95)
     out["infer_p95_ms"] = 1000.0 * percentile([r.infer_s for r in window], 95)
     out["mean_batch"] = statistics.fmean([r.batch_size for r in window])
+    # The same four stages as means. They partition a request exactly
+    # (scheduled -> dispatched -> preprocessed -> batch_started -> done), so
+    # unlike the p95s these add up to mean_ms and show each stage's share.
+    out["harness_lag_mean_ms"] = 1000.0 * statistics.fmean(r.harness_lag for r in window)
+    out["preprocess_mean_ms"] = 1000.0 * statistics.fmean(r.preprocess_s for r in window)
+    out["queue_wait_mean_ms"] = 1000.0 * statistics.fmean(r.queue_wait_s for r in window)
+    out["infer_mean_ms"] = 1000.0 * statistics.fmean(r.infer_s for r in window)
 
     # Steady state, checked two independent ways.
     in_win = [(t, d) for t, d in depth_samples if win_start <= t < win_end]
@@ -1020,6 +1039,15 @@ def score_level(records, depth_samples, t0, args, is_dino, sampler=None):
     capacity = min(infer_capacity, pre_capacity)
     offered = len(window) / args.measure_s
     out["capacity_qps"] = capacity
+    # Both stages, not just the binding one: how far apart they are is the
+    # answer to "what do I add to go faster". Utilisation is offered load over
+    # that stage's capacity - for inference, the fraction of replica time
+    # spent inside a batch.
+    out["infer_capacity_qps"] = infer_capacity
+    out["pre_capacity_qps"] = pre_capacity
+    out["infer_busy_s"] = busy
+    out["infer_util"] = offered / infer_capacity if infer_capacity > 0 else float("inf")
+    out["pre_util"] = offered / pre_capacity if pre_capacity > 0 else float("inf")
     out["capacity_bound_by"] = "inference" if infer_capacity <= pre_capacity else "preprocess"
     out["rho_measured"] = offered / capacity if capacity > 0 else float("inf")
     overloaded = not args.selftest and out["rho_measured"] >= 1.0
@@ -1177,7 +1205,10 @@ def warm_buckets(server, payload, buckets, reps, log):
 
 def main():
     args = parse_args()
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if args.run_code and not re.fullmatch(r"[A-Za-z0-9._-]+", args.run_code):
+        raise RuntimeError(
+            f"--run-code {args.run_code!r}: use letters, digits, '.', '_' and '-' only")
+    timestamp = util.timestamp()
 
     if args.device == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA requested but torch.cuda.is_available() is False")
@@ -1185,6 +1216,14 @@ def main():
         raise RuntimeError("--compile is only supported with --dtype bfloat16")
 
     quantize.check(args.quant, args.device, args.dtype)
+    if quantize.is_static(args.quant):
+        if not args.compile:
+            raise RuntimeError(
+                f"--quant {quantize.STATIC} needs --compile: the int8 kernels "
+                f"only exist once Inductor lowers the graph.")
+        # Here rather than in a replica, so a missing file is one clear
+        # message with the build command, not a startup failure per replica.
+        quantize.static_ready(args.model, MODELS_DIR)
     if args.quant != "none" and not args.compile:
         print("WARNING: --quant without --compile is usually slower than plain "
               "bfloat16; the quantise steps only pay off once Inductor fuses "
@@ -1217,6 +1256,10 @@ def main():
     # forward pass at its next barrier. Measured, ViT-L CPU at 20 req/s: four
     # replicas x16 threads with this process on the 32 cores they left free,
     # p95 59 ms; six replicas covering every core, so no free cores, p95 403 ms.
+    # What the process was launched with (taskset, a cgroup, or the whole
+    # machine), read before the parent narrows itself below.
+    affinity = (sorted(os.sched_getaffinity(0))
+                if hasattr(os, "sched_getaffinity") else [])
     parent_cores = None
     if args.replicas > 1 and args.cpu_cores and hasattr(os, "sched_getaffinity"):
         used = {c for sl in rep_slices if sl for c in sl}
@@ -1247,6 +1290,8 @@ def main():
     start_level = args.start_level if args.start_level is not None else (1.0 if is_video else 8.0)
 
     log(f"Timestamp  : {timestamp}")
+    if args.run_code:
+        log(f"Run code   : {args.run_code}")
     log(f"Script     : server_vit_benchmark")
     log(f"Model      : {args.model}")
     log(f"Dataset    : {DATASET_NAME}")
@@ -1272,6 +1317,22 @@ def main():
     log(f"Seed       : {args.seed}")
     log(f"Compile    : {'enabled' if args.compile else 'disabled'}")
     log(f"Processor  : {args.image_processor}")
+    # Core accounting, one number per line so consolidation can take them
+    # as-is. Affinity is the launch mask; "Rep cores" is what one replica is
+    # pinned to and "Rep spare" what its thread pool leaves idle there.
+    if affinity:
+        log(f"Affinity   : {sweep.core_ranges(affinity)}")
+        log(f"Aff cores  : {len(affinity)}")
+        by_socket = sweep.cores_per_socket(affinity)
+        if by_socket:
+            log(f"Aff/socket : {','.join(str(n) for n in by_socket)}")
+    if args.device == "cpu" and affinity:
+        # One in-process replica is not pinned beyond the mask, and shares it
+        # with preprocessing; unpinned replicas likewise float over all of it.
+        rep_cores = len(rep_slices[0]) if rep_slices[0] else len(affinity)
+        threads_now = torch.get_num_threads() if args.replicas == 1 else rep_threads
+        log(f"Rep cores  : {rep_cores}")
+        log(f"Rep spare  : {rep_cores - threads_now}")
     if args.replicas == 1:
         log(f"Threads    : {torch.get_num_threads()}")
     else:
@@ -1284,6 +1345,7 @@ def main():
             log(f"Parent     : {len(parent_cores)} cores the replicas leave free "
                 f"(preprocessing + scheduling)")
         elif args.cpu_cores:
+            log("Parent     : 0 cores of its own (shares the replicas' cores)")
             log("WARNING    : the replicas claim every core, so preprocessing "
                 "shares their cores and preempts them - expect a long tail. "
                 "Leave some cores out of --cpu-cores.")
@@ -1361,22 +1423,27 @@ def main():
             use_fast=(args.image_processor == "fast"),
             log=log,
         )
-        if is_dino:
+        if quantize.is_static(args.quant):
+            # Calibrated ahead of time and saved; it arrives already compiled.
+            model = quantize.load_static(args.model, MODELS_DIR, dtype)
+        elif is_dino:
             model = hub.load_cached(AutoModel.from_pretrained, args.model,
                                     cache_dir=str(MODELS_DIR), log=log)
         else:
             model = hub.load_cached(
                 AutoModelForImageClassification.from_pretrained,
                 args.model, cache_dir=str(MODELS_DIR), log=log)
-        model = model.to(device=args.device, dtype=dtype).eval()
-        # Before compile on purpose: torchao swaps weights for tensor
-        # subclasses, and tracing the bf16 layers first would only be thrown
-        # away. warm_buckets below still warms every shape, quantised or not.
-        model = quantize.apply(model, args.quant)
-        if args.compile:
-            model = torch.compile(
-                model, mode="reduce-overhead" if args.device == "cuda" else None
-            )
+        if not quantize.is_static(args.quant):
+            model = model.to(device=args.device, dtype=dtype).eval()
+            # Before compile on purpose: torchao swaps weights for tensor
+            # subclasses, and tracing the bf16 layers first would only be
+            # thrown away. warm_buckets below still warms every shape,
+            # quantised or not.
+            model = quantize.apply(model, args.quant)
+            if args.compile:
+                model = torch.compile(
+                    model, mode="reduce-overhead" if args.device == "cuda" else None
+                )
 
         server = InferenceServer(
             model=model,
@@ -1555,6 +1622,26 @@ def main():
         log(f"    preprocess_ms       : {best_res['preprocess_p95_ms']:.2f}")
         log(f"    queue_wait_ms       : {best_res['queue_wait_p95_ms']:.2f}")
         log(f"    inference_ms        : {best_res['infer_p95_ms']:.2f}")
+        log("")
+        log("  where the mean goes (mean of each stage; they sum to avg_ms_per_image):")
+        log(f"    harness_lag_mean_ms : {best_res['harness_lag_mean_ms']:.2f}")
+        log(f"    preprocess_mean_ms  : {best_res['preprocess_mean_ms']:.2f}")
+        log(f"    queue_wait_mean_ms  : {best_res['queue_wait_mean_ms']:.2f}")
+        log(f"    inference_mean_ms   : {best_res['infer_mean_ms']:.2f}")
+        log("")
+        # The two stages side by side. service_capacity_qps above is the
+        # smaller; the other one is how much room that stage still has. A "-"
+        # means the stage had nothing to time.
+
+        def rate(v):
+            return "-" if v == float("inf") else f"{v:.2f}"
+
+        log("  capacity by stage (req/s if the stage were never idle, and how busy it is):")
+        log(f"    inference_capacity_qps : {rate(best_res['infer_capacity_qps'])}")
+        log(f"    preprocess_capacity_qps: {rate(best_res['pre_capacity_qps'])}")
+        log(f"    inference_busy_s    : {best_res['infer_busy_s']:.2f}")
+        log(f"    inference_util      : {rate(best_res['infer_util'])}")
+        log(f"    preprocess_util     : {rate(best_res['pre_util'])}")
         if best_res.get("resource_samples"):
             log("")
             log(f"  resources ({best_res['resource_samples']} samples over the window):")
@@ -1567,7 +1654,14 @@ def main():
                 log(f"    cpu_cores_busy_max  : {best_res['cpu_cores_busy_max']:.2f}")
                 log(f"    proc_cpu_pct_mean   : {best_res['cpu_pct_mean']:.1f}")
                 log(f"    sys_cpu_pct_mean    : {best_res['sys_cpu_pct_mean']:.1f}")
+                # rss_gib_max is the harness alone. With replicas the models
+                # live in child processes, one copy each: replica_rss is the
+                # largest single one, total_rss the harness plus all of them.
                 log(f"    rss_gib_max         : {best_res['rss_gib_max']:.2f}")
+                if "child_rss_gib_max" in best_res:
+                    log(f"    replica_rss_gib_max : {best_res['child_rss_gib_max']:.2f}")
+                if "total_rss_gib_max" in best_res:
+                    log(f"    total_rss_gib_max   : {best_res['total_rss_gib_max']:.2f}")
                 log(f"    threads_max         : {best_res['threads_max']}")
             if "gpu_util_pct_mean" in best_res:
                 log(f"    gpu_util_pct_mean   : {best_res['gpu_util_pct_mean']:.1f}")

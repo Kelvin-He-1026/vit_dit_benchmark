@@ -54,9 +54,9 @@ matters for the same reason. Measured here on ViT-B bf16, batch 8, 16 cores:
 """
 
 import argparse
+import re
 import sys
 import time
-from datetime import datetime
 from pathlib import Path
 
 if __package__ in (None, ""):
@@ -72,7 +72,7 @@ import torch
 import torch.multiprocessing
 from transformers import AutoImageProcessor, AutoModel, AutoModelForImageClassification
 
-from common import hostinfo, hub, quantize, resources
+from common import hostinfo, hub, quantize, resources, util
 from common.sweep import (
     ReplicaPool,
     as_list,
@@ -94,6 +94,13 @@ def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--model", choices=MODELS, default=MODELS[0])
     p.add_argument(
+        "--run-code", default="",
+        help="A label of your choosing for this run or sweep, e.g. "
+        "'headroom-v2'. Written to the result header as 'Run code' and to "
+        "the consolidated CSV as run_code, so runs can be grouped by it. "
+        "Letters, digits, '.', '_' and '-' only.",
+    )
+    p.add_argument(
         "--samples", type=int, default=2000,
         help="Images scored in the accuracy pass. Ignored by --throughput, "
         "which sizes its image pool with --pool-images instead.",
@@ -104,7 +111,7 @@ def parse_args():
     p.add_argument("--dtype", choices=["float32", "bfloat16"], default="float32")
     p.add_argument(
         "--quant",
-        choices=quantize.RECIPES,
+        choices=quantize.VIT_RECIPES,
         default="none",
         help="W8A8 post-training quantisation of every nn.Linear via torchao: "
         "'int8' (per-output-channel weight scales) or 'fp8' (e4m3, per-tensor, "
@@ -359,15 +366,19 @@ def _replica_main(conn, cfg, pool):
     from common import hub as _hub
     from common import quantize as _quantize
 
-    cls = AutoModel if cfg["is_dino"] else AutoModelForImageClassification
-    model = _hub.load_cached(cls.from_pretrained, cfg["model"],
-                             cache_dir=cfg["models_dir"])
-    model = model.to(device=device, dtype=dtype).eval()
-    model = _quantize.apply(model, cfg["quant"])
-    if cfg["compile"]:
-        model = _torch.compile(
-            model, mode="reduce-overhead" if device.startswith("cuda") else None
-        )
+    if _quantize.is_static(cfg["quant"]):
+        # Calibrated ahead of time and saved; it arrives already compiled.
+        model = _quantize.load_static(cfg["model"], cfg["models_dir"], dtype)
+    else:
+        cls = AutoModel if cfg["is_dino"] else AutoModelForImageClassification
+        model = _hub.load_cached(cls.from_pretrained, cfg["model"],
+                                 cache_dir=cfg["models_dir"])
+        model = model.to(device=device, dtype=dtype).eval()
+        model = _quantize.apply(model, cfg["quant"])
+        if cfg["compile"]:
+            model = _torch.compile(
+                model, mode="reduce-overhead" if device.startswith("cuda") else None
+            )
 
     def sync():
         if device.startswith("cuda"):
@@ -735,7 +746,10 @@ def run_throughput(args, rows_ds, timestamp, header, log):
 
 def main():
     args = parse_args()
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if args.run_code and not re.fullmatch(r"[A-Za-z0-9._-]+", args.run_code):
+        raise RuntimeError(
+            f"--run-code {args.run_code!r}: use letters, digits, '.', '_' and '-' only")
+    timestamp = util.timestamp()
 
     if args.device == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA requested but torch.cuda.is_available() is False")
@@ -745,6 +759,12 @@ def main():
 
     if not args.throughput:
         quantize.check(args.quant, args.device, args.dtype)
+        if quantize.is_static(args.quant):
+            if not args.compile:
+                raise RuntimeError(
+                    f"--quant {quantize.STATIC} needs --compile: the int8 "
+                    f"kernels only exist once Inductor lowers the graph.")
+            quantize.static_ready(args.model, MODELS_DIR)
     if args.quant != "none" and not args.compile:
         print("WARNING: --quant without --compile is usually slower than plain "
               "bfloat16; the quantise steps only pay off once Inductor fuses "
@@ -779,6 +799,8 @@ def main():
         output_lines.append(msg)
 
     log(f"Timestamp  : {timestamp}")
+    if args.run_code:
+        log(f"Run code   : {args.run_code}")
     if not args.throughput:
         log(f"Model      : {args.model}")
     log(f"Dataset    : {DATASET_NAME}")
@@ -848,22 +870,28 @@ def main():
 
     is_dino = "dinov2" in args.model.lower()
 
-    if is_dino:
-        model = hub.load_cached(AutoModel.from_pretrained, args.model,
-                                cache_dir=str(MODELS_DIR), log=log)
+    if quantize.is_static(args.quant):
+        # Calibrated ahead of time and saved; it arrives already compiled.
+        model = quantize.load_static(args.model, MODELS_DIR, dtype)
     else:
-        model = hub.load_cached(AutoModelForImageClassification.from_pretrained,
-                                args.model, cache_dir=str(MODELS_DIR), log=log)
+        if is_dino:
+            model = hub.load_cached(AutoModel.from_pretrained, args.model,
+                                    cache_dir=str(MODELS_DIR), log=log)
+        else:
+            model = hub.load_cached(AutoModelForImageClassification.from_pretrained,
+                                    args.model, cache_dir=str(MODELS_DIR), log=log)
 
-    model = model.to(device=args.device, dtype=dtype)
-    model.eval()
+        model = model.to(device=args.device, dtype=dtype)
+        model.eval()
 
-    # Before compile on purpose: torchao swaps weights for tensor subclasses,
-    # and tracing the bf16 layers first would only be thrown away.
-    model = quantize.apply(model, args.quant)
+        # Before compile on purpose: torchao swaps weights for tensor
+        # subclasses, and tracing the bf16 layers first would only be thrown
+        # away.
+        model = quantize.apply(model, args.quant)
 
-    if args.compile:
-        model = torch.compile(model, mode="reduce-overhead" if args.device == "cuda" else None)
+        if args.compile:
+            model = torch.compile(
+                model, mode="reduce-overhead" if args.device == "cuda" else None)
 
     # Prepare one batch for warmup. Built inside inference_mode so it carries
     # the same dispatch key set as the timed loop's tensors below. Tensors

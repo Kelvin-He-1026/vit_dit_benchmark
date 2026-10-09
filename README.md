@@ -98,6 +98,30 @@ On CPU only `int8` is accepted. No x86 CPU has FP8 arithmetic, so that path is
 software emulation and runs about 4x slower than plain bfloat16. int8 on this
 Xeon measured at parity with AMX bfloat16 rather than ahead of it.
 
+### Static int8 on CPU
+
+`--quant int8` quantises at startup and measures every activation on every
+forward. `--quant int8-static` instead loads a model that was calibrated ahead
+of time, so each quantised layer runs as a single int8 kernel. CPU only, ViT
+harnesses only, and always with `--compile`. Build the model once:
+
+```bash
+python -m vit.build_static_int8 --model google/vit-base-patch16-224   # or --all
+```
+
+It is saved under `models/static-int8/<org>_<name>/` (`model.pt2` plus a
+`meta.json` recording how it was made). Then:
+
+```bash
+python -m vit.server_vit_benchmark --model google/vit-base-patch16-224 \
+    --device cpu --dtype bfloat16 --quant int8-static --compile \
+    --replicas 4 --threads 12 --cpu-cores 0-23,48-71
+```
+
+Compare its `top1_accuracy` against the bf16 run of the same model before
+trusting the speed. The DINOv2 models have no classifier, so they have no such
+check.
+
 ### Serving from several replicas (both sockets)
 
 `server_vit_benchmark.py --replicas N` runs N inference processes behind one

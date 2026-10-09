@@ -27,6 +27,9 @@
 # file (or set FORCE=1) to rerun it.
 set -uo pipefail
 cd "$(dirname "$0")/.."
+# Log names and start/done lines in US Eastern time, matching the stamps the
+# benchmarks put on their result files (common/util.py OUTPUT_TZ).
+export TZ=America/New_York
 
 # One sweep at a time. Two overlapping sweeps share cuda:0 and cores 0-47,
 # and every number either of them produces is then wrong. The lock is held
@@ -40,13 +43,21 @@ fi
 PY=cv_env/bin/python
 OUT_DIR="${BENCH_OUTPUT_ROOT:-output_SR630_6740_L4}/server_dit_output"
 FORCE="${FORCE:-0}"
+# Names the sweep: written into every result file ("Run code"), the
+# consolidated CSV (run_code) and the log's file name. A cell only counts as
+# done if it was finished under the same code.
+RUN_CODE="${RUN_CODE:-}"
+if [[ -n $RUN_CODE && ! $RUN_CODE =~ ^[A-Za-z0-9._-]+$ ]]; then
+  echo "RUN_CODE '$RUN_CODE': use letters, digits, '.', '_' and '-' only" >&2
+  exit 1
+fi
 BACKEND="${BACKEND:-diffusers}"
 case "$BACKEND" in
   diffusers) PREFIX=server_dit ;;
   vllm)      PREFIX=server_dit_vllm ;;
   *) echo "BACKEND must be diffusers or vllm, got '$BACKEND'" >&2; exit 1 ;;
 esac
-LOG=server_dit_sweep_${BACKEND}_$(date +%Y%m%d_%H%M%S).log
+LOG=server_dit_sweep_${BACKEND}_${RUN_CODE:+${RUN_CODE}_}$(date +%Y%m%d_%H%M%S).log
 # Models vLLM-Omni batches natively; every other model is batch 1 under vLLM.
 VLLM_BATCHING_MODELS=" stabilityai/stable-diffusion-3.5-medium stabilityai/stable-diffusion-3.5-large "
 # Native vLLM-Omni pipelines that ignore --quant (vLLM-Omni 0.26's SD3 loads
@@ -80,6 +91,9 @@ done_already() {
   [[ "$FORCE" == 1 ]] && return 1
   for f in "$OUT_DIR"/"${PREFIX}"_"${slug}"_"$2"_"$3$4"r_*.txt; do
     [[ -f "$f" && "$f" != *_requests.csv ]] || continue
+    if [[ -n $RUN_CODE ]]; then
+      grep -q "^Run code   : $RUN_CODE\$" "$f" || continue
+    fi
     grep -q "^Batch size : $5 (max)" "$f" && grep -q "^=== RESULT ===" "$f" \
       && return 0
   done
@@ -95,8 +109,9 @@ cell() {
     return
   fi
   log ""
-  log "=== $(date '+%F %T') start: $model $tag $device x$replicas bs$bs ($BACKEND)"
-  if $PY -m dit.server_dit_benchmark "${COMMON[@]}" --backend "$BACKEND" --model "$model" \
+  log "=== $(date '+%F %T') start: $model $tag $device x$replicas bs$bs ($BACKEND${RUN_CODE:+, run code $RUN_CODE})"
+  if $PY -m dit.server_dit_benchmark "${COMMON[@]}" ${RUN_CODE:+--run-code "$RUN_CODE"} \
+       --backend "$BACKEND" --model "$model" \
        --device "$device" --replicas "$replicas" --max-batch-size "$bs" "$@" \
        2>&1 | tee -a "$LOG"; then
     log "=== $(date '+%F %T') done:  $model $tag $device x$replicas bs$bs"

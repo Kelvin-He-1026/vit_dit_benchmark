@@ -51,6 +51,25 @@ On CPU, int8 only
   calibrated PT2E/X86InductorQuantizer or IPEX flow would. It stays available
   because the answer is per machine and worth measuring on yours.
 
+Static int8 (--quant int8-static), CPU only
+  The calibrated flow the paragraph above points at. Activation ranges are
+  measured once, ahead of time, on real images, and baked into the graph as
+  constants; the result is saved under models/static-int8/ and the benchmarks
+  load that file instead of quantising at startup. With no per-forward
+  measuring, a quantised Linear or conv lowers to a single oneDNN int8
+  primitive (VNNI / AMX-INT8) when Inductor compiles it. Everything the
+  quantizer leaves alone - LayerNorm, softmax, the attention matmuls - runs in
+  bfloat16 under autocast, so it is int8 mixed with bf16, the same pairing the
+  dynamic recipes use.
+
+  Two steps, by design: building needs the dataset and minutes of
+  calibration, and must not be redone by every replica of every run.
+
+    python -m vit.build_static_int8 --model google/vit-base-patch16-224
+    python -m vit.server_vit_benchmark --quant int8-static --compile ...
+
+  See the "Static int8" section at the bottom of this file.
+
 Accuracy is not assumed
   This is post-training quantisation with no calibration set, so it can and
   does move top-1. Both benchmarks already score top-1 against ImageNet labels
@@ -61,6 +80,11 @@ Accuracy is not assumed
 import torch
 
 RECIPES = ("none", "int8", "fp8")
+# Calibrated ahead of time and loaded from disk; see the static section below.
+# Kept out of RECIPES because only the ViT harnesses can load it - the DiT
+# ones take RECIPES as their --quant choices.
+STATIC = "int8-static"
+VIT_RECIPES = RECIPES + (STATIC,)
 
 
 def describe(recipe):
@@ -72,6 +96,10 @@ def describe(recipe):
         version = torchao.__version__
     except ImportError:
         version = "not installed"
+    if recipe == STATIC:
+        return (f"{recipe} (static w8a8, calibrated ahead of time, per-channel "
+                f"weights, uint8 activations with fixed ranges, Linear and conv, "
+                f"rest bfloat16, torchao {version})")
     # Same "<value> (<detail>)" shape as the Compile line, so consolidation
     # splits it into a short column plus a detail column.
     detail = ("int8 weights per output channel" if recipe == "int8"
@@ -88,8 +116,13 @@ def check(recipe, device, dtype_name):
     """
     if recipe == "none":
         return
-    if recipe not in RECIPES:
-        raise RuntimeError(f"unknown --quant {recipe!r}; pick one of {RECIPES}")
+    if recipe not in VIT_RECIPES:
+        raise RuntimeError(f"unknown --quant {recipe!r}; pick one of {VIT_RECIPES}")
+    if recipe == STATIC and device != "cpu":
+        raise RuntimeError(
+            f"--quant {STATIC} is CPU only: it lowers to oneDNN int8 kernels "
+            f"through the x86 Inductor backend. Use --quant int8 or fp8 on CUDA."
+        )
     if device != "cuda" and recipe == "fp8":
         raise RuntimeError(
             "--quant fp8 is CUDA only. No x86 CPU has FP8 arithmetic - this "
@@ -134,7 +167,9 @@ def check(recipe, device, dtype_name):
 # so quantising them would break every batch below 17. They are also the layers
 # where 8 bits costs the most accuracy and saves the least time: the ViT-B head
 # is 0.8M of 86M parameters.
-SKIP_SUFFIXES = ("classifier", "head", "pooler.dense")
+# "classifier.1" is ResNet's head - a Sequential(Flatten, Linear), so the
+# Linear is not itself named "classifier" - and it is that model's only Linear.
+SKIP_SUFFIXES = ("classifier", "classifier.1", "head", "pooler.dense")
 
 
 # fp8 only: torchao 0.18 recognises its blockwise-128 fp8 weights by
@@ -162,6 +197,11 @@ def apply(model, recipe):
     """
     if recipe == "none":
         return model
+    if recipe == STATIC:
+        raise RuntimeError(
+            f"{STATIC} is loaded from disk, not applied to a live model; "
+            f"call load_static() instead of apply()."
+        )
     from torchao.quantization import (
         Float8DynamicActivationFloat8WeightConfig,
         Int8DynamicActivationInt8WeightConfig,
@@ -180,7 +220,218 @@ def count(model, recipe=None):
     Reported by vit_benchmark.py's replicas at startup, so a run's own log
     says how much of the model the recipe actually reached.
     """
+    if isinstance(model, StaticModel):
+        return model.quantised, model.skipped
     linears = [(fqn, m) for fqn, m in model.named_modules()
                if isinstance(m, torch.nn.Linear)]
     skipped = sum(1 for fqn, m in linears if _skipped(m, fqn, recipe))
     return len(linears) - skipped, skipped
+
+
+# ---------------------------------------------------------------------------
+# Static int8
+#
+# build_static() runs once per model and writes
+#
+#   <models_dir>/static-int8/<org>_<name>/model.pt2    the quantised graph
+#   <models_dir>/static-int8/<org>_<name>/meta.json    how it was made
+#
+# load_static() is what the benchmarks call. Nothing here knows about
+# datasets or image processors: the caller hands build_static() calibration
+# batches, so this module stays usable from any harness.
+# ---------------------------------------------------------------------------
+
+STATIC_DIRNAME = "static-int8"
+STATIC_MAX_BATCH = 64
+
+
+def static_dir(model_name, models_dir):
+    from pathlib import Path
+    return Path(models_dir) / STATIC_DIRNAME / model_name.replace("/", "_")
+
+
+def static_ready(model_name, models_dir):
+    """Path of the saved graph. Raises, with the command to build it, if absent."""
+    path = static_dir(model_name, models_dir) / "model.pt2"
+    if not path.is_file():
+        raise RuntimeError(
+            f"no static int8 model for {model_name} at {path}. Build it once "
+            f"with:\n    python -m vit.build_static_int8 --model {model_name}"
+        )
+    return path
+
+
+def _register_x86_lowering():
+    """Make Inductor recognise the quantised patterns.
+
+    Importing the quantizer module is what registers its weight-prepack and
+    dequant-promotion passes with Inductor, and freezing is what lets those
+    passes see the weights as constants. Without both, the graph still runs -
+    as dequantise -> float op -> quantise, slower than not quantising at all.
+    """
+    import warnings
+
+    import torch._inductor.config as inductor_config
+    import torchao.quantization.pt2e.quantizer.x86_inductor_quantizer as xiq
+    inductor_config.freezing = True
+    # Inductor's own int8 lowering copies each weight zero-point with
+    # torch.tensor(tensor), which warns once per layer per compile - hundreds
+    # of identical lines in a replica's log, none of them about this code.
+    warnings.filterwarnings(
+        "ignore", message="To copy construct from a tensor", category=UserWarning)
+    return xiq
+
+
+class _ExportCore(torch.nn.Module):
+    """pixel_values -> one tensor, so the exported graph has a plain signature.
+
+    The first element of the model's output: logits for a classifier, the
+    last hidden state for a bare encoder (DINOv2).
+    """
+
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+
+    def forward(self, pixel_values):
+        return self.model(pixel_values=pixel_values, return_dict=False)[0]
+
+
+def _dynamic_batch():
+    return {"pixel_values": {0: torch.export.Dim("batch", min=1, max=STATIC_MAX_BATCH)}}
+
+
+def build_static(model, calibration, model_name, models_dir, log=print, extra_meta=None):
+    """Calibrate `model`, quantise it, save it. Returns the saved path.
+
+    model        the float32 nn.Module, in eval mode, on CPU
+    calibration  iterable of float32 pixel batches, preprocessed exactly as
+                 the benchmark will preprocess them. A few hundred images is
+                 plenty: the observers only need the range of each activation.
+    """
+    import json
+    import time
+
+    import torchao
+    from torchao.quantization.pt2e.quantize_pt2e import convert_pt2e, prepare_pt2e
+
+    from common import util
+
+    xiq = _register_x86_lowering()
+
+    batches = [b.to(torch.float32) for b in calibration]
+    if not batches:
+        raise RuntimeError("build_static needs at least one calibration batch")
+    # Two rows, not one: a batch of 1 makes the exporter specialise the batch
+    # dimension to the constant 1 instead of leaving it dynamic.
+    example = (torch.cat([batches[0], batches[0]])[:2].contiguous(),)
+
+    core = _ExportCore(model).eval()
+    linear_total = sum(isinstance(m, torch.nn.Linear) for m in model.modules())
+
+    t0 = time.perf_counter()
+    exported = torch.export.export(core, example, dynamic_shapes=_dynamic_batch()).module()
+    quantizer = xiq.X86InductorQuantizer()
+    quantizer.set_global(xiq.get_default_x86_inductor_quantization_config())
+    prepared = prepare_pt2e(exported, quantizer)
+    log(f"  exported and prepared in {time.perf_counter() - t0:.0f} s")
+
+    t0 = time.perf_counter()
+    images = 0
+    with torch.no_grad():
+        for batch in batches:
+            prepared(batch)
+            images += batch.shape[0]
+    log(f"  calibrated on {images} images in {time.perf_counter() - t0:.0f} s")
+
+    converted = convert_pt2e(prepared)
+    # A Linear is quantised when its weight reaches it through a dequantise
+    # node; the rest were left in float by the quantizer.
+    linear_quantised = sum(
+        1 for node in converted.graph.nodes
+        if node.op == "call_function" and "linear" in str(node.target)
+        and len(node.args) > 1 and "dequantize" in str(getattr(node.args[1], "target", ""))
+    )
+
+    out_dir = static_dir(model_name, models_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / "model.pt2"
+    program = torch.export.export(converted, example, dynamic_shapes=_dynamic_batch())
+    torch.export.save(program, str(path))
+
+    meta = {
+        "model": model_name,
+        "recipe": STATIC,
+        "quantizer": "X86InductorQuantizer, default static config",
+        "calibration_images": images,
+        "input_shape": list(example[0].shape[1:]),
+        "max_batch": STATIC_MAX_BATCH,
+        "linear_total": linear_total,
+        "linear_quantised": linear_quantised,
+        "torch": torch.__version__,
+        "torchao": torchao.__version__,
+        "built": util.timestamp(),
+    }
+    meta.update(extra_meta or {})
+    (out_dir / "meta.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+    log(f"  {linear_quantised} of {linear_total} Linear layers quantised")
+    log(f"  saved {path} ({path.stat().st_size / 2**20:.0f} MiB)")
+    return path
+
+
+class StaticModel:
+    """A saved static-int8 graph, compiled, behind the call the harnesses make.
+
+    They call model(pixel_values=batch) and read .logits or .last_hidden_state
+    off the result, so this hands back the one output tensor under both names
+    rather than making every call site know which kind of model it holds.
+
+    The graph is compiled with dynamic=False, so each batch size is its own
+    specialisation: that is what lets every quantised Linear match Inductor's
+    int8 pattern, and the harnesses pad to --batch-buckets under --compile
+    anyway, so the set of sizes is small and all of it is warmed before any
+    measurement.
+    """
+
+    def __init__(self, path, meta, bf16=True):
+        import torchao.quantization.pt2e  # noqa: F401 - registers the q/dq ops the file uses
+
+        _register_x86_lowering()
+        self.meta = meta
+        self.quantised = int(meta.get("linear_quantised", 0))
+        self.skipped = int(meta.get("linear_total", 0)) - self.quantised
+        self.bf16 = bf16
+        graph = torch.export.load(str(path)).module()
+        self._compiled = torch.compile(graph, dynamic=False)
+
+    def __call__(self, pixel_values=None, **_unused):
+        from types import SimpleNamespace
+
+        # The graph's first node quantises its input, which has to be float32
+        # whatever --dtype the harness cast the batch to. Autocast is what
+        # runs the unquantised remainder in bfloat16.
+        x = pixel_values.to(torch.float32)
+        with torch.autocast("cpu", dtype=torch.bfloat16, enabled=self.bf16):
+            out = self._compiled(x)
+        return SimpleNamespace(logits=out, last_hidden_state=out)
+
+    def eval(self):
+        return self
+
+
+def load_static(model_name, models_dir, dtype=torch.bfloat16):
+    """The compiled static-int8 model for `model_name`, ready to call.
+
+    Compilation itself happens on the first call at each batch size, i.e. in
+    the harness's warm-up, not here.
+    """
+    import json
+
+    path = static_ready(model_name, models_dir)
+    meta_path = path.with_name("meta.json")
+    meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.is_file() else {}
+    return StaticModel(path, meta, bf16=(dtype == torch.bfloat16))
+
+
+def is_static(recipe):
+    return recipe == STATIC

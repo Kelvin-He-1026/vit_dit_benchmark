@@ -37,9 +37,9 @@ Timing:
 """
 
 import argparse
+import re
 import sys
 import time
-from datetime import datetime
 from pathlib import Path
 
 if __package__ in (None, ""):
@@ -55,7 +55,7 @@ import torch
 from diffusers import DiffusionPipeline
 from huggingface_hub.errors import GatedRepoError
 
-from common import hostinfo, hub, quantize, resources, sweep
+from common import hostinfo, hub, quantize, resources, sweep, util
 from common.util import sync
 from dit.dit_common import (MODELS, UNSUPPORTED, denoiser, load_prompts,
                             step_kwargs, steps_for)
@@ -66,6 +66,13 @@ OUTPUT_DIR = OUTPUT_ROOT / "dit_output"
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--model", choices=MODELS, default=MODELS[0])
+    p.add_argument(
+        "--run-code", default="",
+        help="A label of your choosing for this run or sweep, e.g. "
+        "'headroom-v2'. Written to the result header as 'Run code' and to "
+        "the consolidated CSV as run_code, so runs can be grouped by it. "
+        "Letters, digits, '.', '_' and '-' only.",
+    )
     p.add_argument("--samples", type=int, default=10)
     p.add_argument(
         "--steps", type=int, default=None,
@@ -623,7 +630,10 @@ def write_combination(args, header, model_name, dtype_name, quant, rows, best,
 
 def main():
     args = parse_args()
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if args.run_code and not re.fullmatch(r"[A-Za-z0-9._-]+", args.run_code):
+        raise RuntimeError(
+            f"--run-code {args.run_code!r}: use letters, digits, '.', '_' and '-' only")
+    timestamp = util.timestamp()
 
     if args.model in UNSUPPORTED:
         raise RuntimeError(f"{args.model} cannot run here.\n{UNSUPPORTED[args.model]}")
@@ -666,6 +676,8 @@ def main():
         output_lines.append(msg)
 
     log(f"Timestamp  : {timestamp}")
+    if args.run_code:
+        log(f"Run code   : {args.run_code}")
     if not args.throughput:
         log(f"Model      : {args.model}")
     log(f"Device     : {args.device}")

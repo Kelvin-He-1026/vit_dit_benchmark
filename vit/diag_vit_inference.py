@@ -40,7 +40,6 @@ import random
 import statistics
 import sys
 import time
-from datetime import datetime
 from pathlib import Path
 
 if __package__ in (None, ""):
@@ -58,7 +57,7 @@ from PIL import Image
 from torch.cuda import nvtx
 from transformers import AutoImageProcessor, AutoModel, AutoModelForImageClassification
 
-from common import hostinfo, hub
+from common import hostinfo, hub, util
 from common.paths import DATASET_DIR, MODELS_DIR, OUTPUT_ROOT
 from common.util import percentile
 from vit.vit_common import load_validation
@@ -373,7 +372,7 @@ def main():
     sizes = [int(b) for b in args.batch_sizes.split(",") if b.strip()]
     dtype = torch.float32 if args.dtype == "float32" else torch.bfloat16
     is_dino = "dinov2" in args.model.lower()
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = util.timestamp()
 
     lines = []
 
