@@ -1647,7 +1647,7 @@ def main():
             log(f"  resources ({best_res['resource_samples']} samples over the window):")
             if "cpu_cores_busy_mean" in best_res:
                 # Trailing prose would end up inside the CSV value, since
-                # consolidate_results_sr630.py takes everything after the first
+                # consolidate_results.py takes everything after the first
                 # colon. Keep every logged metric line strictly "key : number".
                 log(f"    cpu_logical_count   : {psutil.cpu_count()}")
                 log(f"    cpu_cores_busy_mean : {best_res['cpu_cores_busy_mean']:.2f}")

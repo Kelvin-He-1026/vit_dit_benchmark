@@ -7,8 +7,8 @@
 # Runs from the repo root wherever it is launched from, so the log, the lock
 # and the results tree all land in the same place as before.
 #
-# Cells run one at a time: the GPU replica and the CPU replicas share cores
-# 0-47, so running cells in parallel would skew both results. A second launch
+# Cells run one at a time: the GPU replica and the CPU replicas share a
+# socket, so running cells in parallel would skew both results. A second launch
 # while one is running exits immediately (see the flock below).
 #
 # Every cell uses --compile, GPU and CPU alike, matching the offline
@@ -31,7 +31,7 @@ cd "$(dirname "$0")/.."
 # benchmarks put on their result files (common/util.py OUTPUT_TZ).
 export TZ=America/New_York
 
-# One sweep at a time. Two overlapping sweeps share cuda:0 and cores 0-47,
+# One sweep at a time. Two overlapping sweeps share cuda:0 and its socket,
 # and every number either of them produces is then wrong. The lock is held
 # for the life of this shell and released automatically when it exits.
 exec 9> .server_dit_sweep.lock
@@ -41,7 +41,12 @@ if ! flock -n 9; then
 fi
 
 PY=cv_env/bin/python
-OUT_DIR="${BENCH_OUTPUT_ROOT:-output_SR630_6740_L4}/server_dit_output"
+# Socket sizes, core ranges and the results tree come from the machine.
+source common/host.sh
+OUT_DIR="$HOST_OUTPUT_ROOT/server_dit_output"
+# The GPU replica's host threads go on the socket GPU 0 is attached to; the
+# one-socket CPU cells use socket 0.
+GPU_CORES=${HOST_SOCKET_RANGES[$HOST_GPU_SOCKET]}
 FORCE="${FORCE:-0}"
 # Names the sweep: written into every result file ("Run code"), the
 # consolidated CSV (run_code) and the log's file name. A cell only counts as
@@ -120,7 +125,11 @@ cell() {
   fi
 }
 
-# ---- 1 socket + 1 L4 ---------------------------------------------------------
+# ---- 1 socket + 1 GPU --------------------------------------------------------
+if (( HOST_GPUS == 0 )); then
+  log "--- skip: GPU cells (no NVIDIA GPU found)"
+  GPU_MODELS=()
+fi
 for m in "${GPU_MODELS[@]}"; do
   for quant in none fp8; do
     tag=bfloat16; [[ $quant != none ]] && tag=bfloat16-$quant
@@ -134,7 +143,7 @@ for m in "${GPU_MODELS[@]}"; do
         continue
       fi
       cell "$m" "$tag" cuda 1 "$bs" -- \
-        --devices cuda:0 --cpu-cores 0-47 --dtype bfloat16 --quant "$quant" \
+        --devices cuda:0 --cpu-cores "$GPU_CORES" --dtype bfloat16 --quant "$quant" \
         --compile --requests 100 --gpu-placement auto
     done
   done
@@ -149,15 +158,16 @@ fi
 # ---- CPU, one socket ---------------------------------------------------------
 for m in "${CPU_MODELS[@]}"; do
   cell "$m" bfloat16 cpu 1 1 -- \
-    --cpu-cores 0-47 --dtype bfloat16 --quant none --compile --requests 30
+    --cpu-cores "${HOST_SOCKET_RANGES[0]}" --dtype bfloat16 --quant none --compile --requests 30
 done
 
-# ---- CPU, both sockets (one replica per socket, shared queue) ----------------
+# ---- CPU, every socket (one replica per socket, shared queue) ----------------
+(( HOST_SOCKETS > 1 )) || CPU_MODELS=()
 for m in "${CPU_MODELS[@]}"; do
-  cell "$m" bfloat16 cpu 2 1 -- \
-    --cpu-cores 0-95 --dtype bfloat16 --quant none --compile --requests 30
+  cell "$m" bfloat16 cpu "$HOST_SOCKETS" 1 -- \
+    --cpu-cores "${HOST_SOCKET_RANGES[@]}" --dtype bfloat16 --quant none --compile --requests 30
 done
 
 log ""
 log "=== $(date '+%F %T') sweep finished, consolidating"
-$PY consolidate_results_sr630.py 2>&1 | tee -a "$LOG"
+$PY consolidate_results.py 2>&1 | tee -a "$LOG"

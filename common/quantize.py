@@ -301,6 +301,71 @@ def _dynamic_batch():
     return {"pixel_values": {0: torch.export.Dim("batch", min=1, max=STATIC_MAX_BATCH)}}
 
 
+def _drop_unused_state(graph_module):
+    """Delete every parameter and buffer the graph no longer reads.
+
+    convert_pt2e folds each quantised weight into a new int8 constant but
+    leaves the float32 original attached to the module, with nothing reading
+    it. Exporting or loading the module as it stands carries those along: for
+    ViT-B, 329 MiB of dead float32 next to the 84 MiB of int8 the graph
+    actually uses. Returns the number of bytes removed.
+    """
+    graph = graph_module.graph
+    for node in list(graph.nodes):
+        if node.op == "get_attr" and not node.users:
+            graph.erase_node(node)
+    graph_module.recompile()
+    used = {node.target for node in graph.nodes if node.op == "get_attr"}
+    freed = 0
+    state = list(graph_module.named_parameters()) + list(graph_module.named_buffers())
+    for full_name, tensor in state:
+        if full_name in used:
+            continue
+        owner = graph_module
+        *parents, leaf = full_name.split(".")
+        for part in parents:
+            owner = getattr(owner, part)
+        if owner._parameters.pop(leaf, None) is not None or \
+                owner._buffers.pop(leaf, None) is not None:
+            freed += tensor.numel() * tensor.element_size()
+    return freed
+
+
+def _save_program(graph_module, example, path):
+    program = torch.export.export(graph_module, example, dynamic_shapes=_dynamic_batch())
+    torch.export.save(program, str(path))
+
+
+def slim_static(model_name, models_dir, log=print):
+    """Rewrite an already-built model without its unused float32 weights.
+
+    For files saved before build_static() dropped them itself. No
+    recalibration: the quantised graph is loaded, pruned and saved back.
+    """
+    import json
+
+    import torchao.quantization.pt2e  # noqa: F401 - registers the q/dq ops the file uses
+
+    path = static_ready(model_name, models_dir)
+    meta_path = path.with_name("meta.json")
+    meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.is_file() else {}
+    before = path.stat().st_size
+    graph_module = torch.export.load(str(path)).module()
+    freed = _drop_unused_state(graph_module)
+    if not freed:
+        log(f"  {model_name}: nothing to remove ({before / 2**20:.0f} MiB)")
+        return path
+    shape = meta.get("input_shape", [3, 224, 224])
+    example = (torch.zeros(2, *shape, dtype=torch.float32),)
+    tmp = path.with_suffix(".pt2.tmp")
+    _save_program(graph_module, example, tmp)
+    tmp.replace(path)
+    meta["slimmed"] = True
+    meta_path.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+    log(f"  {model_name}: {before / 2**20:.0f} -> {path.stat().st_size / 2**20:.0f} MiB")
+    return path
+
+
 def build_static(model, calibration, model_name, models_dir, log=print, extra_meta=None):
     """Calibrate `model`, quantise it, save it. Returns the saved path.
 
@@ -353,11 +418,14 @@ def build_static(model, calibration, model_name, models_dir, log=print, extra_me
         and len(node.args) > 1 and "dequantize" in str(getattr(node.args[1], "target", ""))
     )
 
+    # Before saving: the float32 originals of every quantised weight are still
+    # attached and would otherwise make the file ~5x the size it needs to be.
+    _drop_unused_state(converted)
+
     out_dir = static_dir(model_name, models_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / "model.pt2"
-    program = torch.export.export(converted, example, dynamic_shapes=_dynamic_batch())
-    torch.export.save(program, str(path))
+    _save_program(converted, example, path)
 
     meta = {
         "model": model_name,
@@ -386,11 +454,12 @@ class StaticModel:
     off the result, so this hands back the one output tensor under both names
     rather than making every call site know which kind of model it holds.
 
-    The graph is compiled with dynamic=False, so each batch size is its own
-    specialisation: that is what lets every quantised Linear match Inductor's
-    int8 pattern, and the harnesses pad to --batch-buckets under --compile
-    anyway, so the set of sizes is small and all of it is warmed before any
-    measurement.
+    The graph is compiled once, with a dynamic batch dimension, and that one
+    compiled artefact serves every batch size. Compiling per batch size
+    instead (dynamic=False) gives each size its own prepacked copy of the int8
+    weights - five copies for the buckets 1..16 - for no speed in return:
+    measured on ViT-B, 12 threads, both ways land within 1 ms of each other at
+    every size from 1 to 16, at 1.32 GiB against 1.48.
     """
 
     def __init__(self, path, meta, bf16=True):
@@ -402,7 +471,10 @@ class StaticModel:
         self.skipped = int(meta.get("linear_total", 0)) - self.quantised
         self.bf16 = bf16
         graph = torch.export.load(str(path)).module()
-        self._compiled = torch.compile(graph, dynamic=False)
+        # Covers files built before build_static() pruned them; a no-op on
+        # ones that are already slim.
+        _drop_unused_state(graph)
+        self._compiled = torch.compile(graph, dynamic=True)
 
     def __call__(self, pixel_values=None, **_unused):
         from types import SimpleNamespace

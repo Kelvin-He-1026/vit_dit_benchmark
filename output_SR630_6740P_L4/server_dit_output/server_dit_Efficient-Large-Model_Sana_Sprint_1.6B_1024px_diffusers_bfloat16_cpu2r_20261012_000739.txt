@@ -1,0 +1,128 @@
+Timestamp  : 20261012_000739
+Run code   : cpu-layout
+Script     : server_dit
+Backend    : diffusers
+Model      : Efficient-Large-Model/Sana_Sprint_1.6B_1024px_diffusers
+Dataset    : byliutao/coco2014val_10k (prompts)
+Device     : cpu
+Server     : ThinkSystem SR630 V4
+CPU        : Intel(R) Xeon(R) 6740P
+CPU cores  : 96 logical, 96 physical, 2 sockets
+GPU        : unknown
+Dtype      : bfloat16
+Resolution : 1024x1024
+Steps      : 4
+Seed       : 42
+Quant      : disabled
+Replicas   : 2
+Devices    : cpu
+CPU bind   : 0-47,48-95
+Threads    : 48
+Batch size : 1 (max)
+Batch wait : 0 ms
+Workload   : interactive
+Think time : 30 s
+SLA        : p95 end-to-end <= 30 s
+Drop after : 2x SLA queued (60 s)
+Requests   : 30 scored + 10 warmup per level
+Calibrate  : 5 generations per replica
+Early stop : enabled
+Compile    : enabled (torch.compile on the transformer submodule)
+  replica 0: cpu, 48 intra-op threads, 48 cores visible, cpu
+  replica 1: cpu, 48 intra-op threads, 48 cores visible, cpu
+  replica 0: warmed batch 1..1 in 20 s
+  replica 1: warmed batch 1..1 in 19 s
+
+=== CALIBRATION (batch 1, sequential, per replica) ===
+  replica 0: service mean 5.924 s  text 0.479  denoise 1.341  decode 4.100  jpeg 0.004
+  replica 1: service mean 6.047 s  text 0.520  denoise 1.418  decode 4.105  jpeg 0.003
+  service_mean_s      : 5.985
+  service_p95_s       : 6.214
+  service_cv2         : 0.0011
+  mu_rps              : 0.3342  (20.05 req/min, batch 1, all replicas)
+  images saved to     : /home/lhe4/vit_dit_first_cut/output_SR630_6740_L4/server_dit_output/server_dit_Efficient-Large-Model_Sana_Sprint_1.6B_1024px_diffusers_bfloat16_cpu2r_20261012_000739_images
+Resource monitor: RAPL counters unreadable, CPU power disabled
+Monitor    : host=psutil device=off cpu_power=off every 1000 ms
+
+=== SWEEP ===
+->   10.025 req/min  rho= 0.50  40 arrivals, ~4 min unless stopped early
+   p50=   6.09  p95=  13.17  p99=  14.12 s  ok=30/30  drop=0  batch=1.00  thr=9.78 img/min  cap=20.21/min  PASS  ok
+->   14.035 req/min  rho= 0.70  40 arrivals, ~3 min unless stopped early
+   p50=   9.38  p95=  17.09  p99=  18.03 s  ok=30/30  drop=0  batch=1.00  thr=13.52 img/min  cap=20.29/min  PASS  ok
+->   17.042 req/min  rho= 0.85  40 arrivals, ~2 min unless stopped early
+   p50=  15.22  p95=  20.17  p99=  21.95 s  ok=30/30  drop=0  batch=1.00  thr=16.28 img/min  cap=20.08/min  PASS  ok
+->   20.050 req/min  rho= 1.00  40 arrivals, ~2 min unless stopped early
+   p50=  22.17  p95=  26.14  p99=  27.17 s  ok=30/30  drop=0  batch=1.00  thr=17.79 img/min  cap=20.33/min  FAIL  no steady state under SLA: queue would settle at mean 112.2 s at rho 0.99
+->   18.485 req/min  rho= 0.92  40 arrivals, ~2 min unless stopped early
+   p50=  19.49  p95=  22.82  p99=  23.44 s  ok=30/30  drop=0  batch=1.00  thr=17.57 img/min  cap=20.15/min  PASS  ok
+->   19.251 req/min  rho= 0.96  40 arrivals, ~2 min unless stopped early
+   p50=  19.84  p95=  24.30  p99=  24.96 s  ok=30/30  drop=0  batch=1.00  thr=18.05 img/min  cap=20.48/min  PASS  ok
+
+=== RESULT ===
+sla_seconds             : 30
+sla_percentile          : 95
+workload                : interactive
+calibrated_mu_rps       : 0.33416
+calibrated_service_s    : 5.9851
+replica_rss_gib_max     : 10.33
+max_qps                 : 0.32086
+max_requests_per_minute : 19.251
+max_images_per_hour     : 1155.1
+rho_at_capacity         : 0.960
+service_capacity_rpm    : 20.484
+rho_measured            : 0.940
+steady_state_mean_ms    : 28039.8
+max_concurrent_inflight : 5.84
+think_time_s            : 30
+max_concurrent_users    : 15.5
+images_per_second       : 0.30079
+goodput_rps             : 0.30079
+sla_attainment_pct      : 100.0
+
+users by think time (Little's Law, same measurement):
+  think_time=  0.0s        :        5.8 users
+  think_time= 15.0s        :       10.7 users
+  think_time= 30.0s        :       15.5 users
+  think_time= 60.0s        :       25.1 users
+
+at the winning level:
+  requests_measured     : 30
+  dropped               : 0
+  p50_ms                : 19837.5
+  p90_ms                : 23287.8
+  p95_ms                : 24298.0
+  p99_ms                : 24962.3
+  max_ms                : 24972.7
+  avg_ms_per_image      : 18215.4
+  predicted_mean_ms     : 41374.2
+  mean_batch_size       : 1.00
+  queue_depth_max       : 7
+  p95_drift             : x0.963
+
+  where the budget goes:
+    harness_lag_ms      : 3.7
+    queue_wait_ms       : 18492.3
+    inference_ms        : 6165.5
+    ipc_ms              : 0.7
+    text_encode_ms      : 478.1
+    denoise_ms          : 1322.7
+    vae_decode_ms       : 4054.0
+    jpeg_encode_ms      : 3.4
+    (queue/inference/ipc/lag are p95; the four stages are means)
+
+  resources (99 samples over the window):
+    sys_cores_busy_mean : 71.24
+    sys_cores_busy_max  : 90.43
+    sys_cpu_pct_mean    : 74.2
+    rss_gib_max         : 0.50
+    total_rss_gib_max   : 20.03
+    power_source        : none
+
+=== LADDER ===
+  req/min   rho   p50 s   p95 s   p99 s  mean s  pred s  img/min attain% drop batch qmax  cores  gpu%      W  verdict
+   10.025  0.50    6.09   13.17   14.12    7.70    6.98     9.78   100.0    0  1.00    4   37.7     -      -  PASS ok
+   14.035  0.70    9.38   17.09   18.03   10.15    8.86    13.52   100.0    0  1.00    5   52.8     -      -  PASS ok
+   17.042  0.85   15.22   20.17   21.95   14.48   13.78    16.28   100.0    0  1.00    6   64.6     -      -  PASS ok
+   18.485  0.92   19.49   22.82   23.44   17.34   22.96    17.57   100.0    0  1.00    6   70.3     -      -  PASS ok
+   19.251  0.96   19.84   24.30   24.96   18.22   41.37    18.05   100.0    0  1.00    7   71.2     -      -  PASS ok
+   20.050  1.00   22.17   26.14   27.17   20.80     inf    17.79   100.0    0  1.00    8   71.3     -      -  FAIL no steady state under SLA: queue would settle at mean 112.2 s at rho 0.99

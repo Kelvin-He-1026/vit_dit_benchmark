@@ -2031,7 +2031,7 @@ def main():
         log("at the winning level:")
         log(f"  requests_measured     : {best_res['n_measured']}")
         log(f"  dropped               : {best_res['n_dropped']}")
-        # ms keys so consolidate_results_sr630.py lands them in the same
+        # ms keys so consolidate_results.py lands them in the same
         # columns as server_vit_benchmark.py.
         log(f"  p50_ms                : {1000 * best_res['p50_s']:.1f}")
         log(f"  p90_ms                : {1000 * best_res['p90_s']:.1f}")
@@ -2071,6 +2071,9 @@ def main():
             for key, f in (
                 ("sys_cores_busy_mean", "{:.2f}"), ("sys_cores_busy_max", "{:.2f}"),
                 ("sys_cpu_pct_mean", "{:.1f}"), ("cpu_power_w_mean", "{:.1f}"),
+                # rss is the harness alone; total_rss adds every replica (or
+                # the vLLM server), which is what the host has to hold.
+                ("rss_gib_max", "{:.2f}"), ("total_rss_gib_max", "{:.2f}"),
                 ("gpu_util_pct_mean", "{:.1f}"), ("gpu_mem_used_gib_max", "{:.2f}"),
                 ("gpu_power_w_mean", "{:.1f}"), ("gpu_power_w_max", "{:.1f}"),
                 ("gpu_sm_clock_mhz_mean", "{:.0f}"), ("gpu_temp_c_max", "{:.0f}"),

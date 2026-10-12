@@ -73,17 +73,17 @@ the host it ran on. Two forms of that:
 host_source says how the short labels for a row were arrived at:
 
   logged    the run recorded its own hardware.
-  inferred  identified from the GPU its monitor named, or from its logical
-            core count, both of which distinguish the two machines here.
-  probed    nothing in the file identifies the hardware, so it is attributed
-            to THIS machine, read live from lscpu and nvidia-smi. That is a
-            guess about provenance - it is only right if the tree being
-            consolidated was produced by the box doing the consolidating.
-  assumed   same, but the live probe came up empty too, so the hardcoded
-            FALLBACK_HOST was used.
+  probed    the file does not identify the hardware, and the tree being
+            consolidated is this machine's own (its folder name is what this
+            machine derives for itself), so the labels were read live from
+            DMI, lscpu and the GPU driver.
+  tree      the file does not identify the hardware and the tree belongs to
+            another machine, so the labels are the three parts of the folder
+            name, output_<server>_<cpu>_<gpu>.
 
-Filter on host_source to exclude probed/assumed rows if a comparison depends
-on the hardware being right.
+No machine is named in this script: which box a result came from is taken
+from the result, then from the tree it sits in. BENCH_OUTPUT_ROOT picks the
+tree to consolidate; the default is this machine's.
 """
 
 import csv
@@ -94,7 +94,7 @@ from collections import defaultdict
 from common import hostinfo
 from common.paths import OUTPUT_ROOT
 
-# Named after the machine, taken from the results tree ("output_SR630_6740_L4"
+# Named after the machine, taken from the results tree ("output_SR630_6740P_L4"
 # -> "consolidated_results_SR630.csv"), so a CSV copied out of its folder still
 # says which box produced it.
 MACHINE_TAG = OUTPUT_ROOT.name.removeprefix("output_").split("_")[0]
@@ -501,102 +501,37 @@ SHARD_SUFFIX_RE = re.compile(r"_shard\d+of\d+$")
 # "host=psutil device=NVIDIA L4 every 250 ms" -> "NVIDIA L4"
 MONITOR_DEVICE_RE = re.compile(r"device=(?P<name>.+?)\s+every\s")
 
-# Marketing noise to drop when shortening a SKU to a label worth grouping by.
-SERVER_NOISE_RE = re.compile(
-    r"\b(lenovo|thinksystem|poweredge|proliant|system|server|inc\.?|corp\.?|"
-    r"corporation)\b", re.I)
-CPU_NOISE_RE = re.compile(
-    r"\((?:r|tm)\)|\b(intel|amd|xeon|epyc|ryzen|core|processor|cpu)\b|@.*$", re.I)
-GPU_VENDOR_RE = re.compile(r"^\s*(nvidia|amd|intel)\b", re.I)
-# Trailing architecture codenames and SKU qualifiers: an "RTX PRO 6000
-# Blackwell Server Edition" is an "RTX PRO 6000" for grouping purposes.
-GPU_TAIL_RE = re.compile(
-    r"\s+(blackwell|hopper|ada|lovelace|ampere|turing|volta|pascal)\b.*$"
-    r"|\s+(server|workstation)\s+edition\b.*$"
-    r"|\s+laptop\s+gpu\b.*$"
-    r"|\s+x\d+$", re.I)
-
-
-def _squash(text):
-    return re.sub(r"\s+", " ", text).strip(" -,")
-
-
-def short_server(full):
-    return _squash(SERVER_NOISE_RE.sub("", full)) or full.strip()
-
-
-def short_cpu(full):
-    return _squash(CPU_NOISE_RE.sub("", full)) or full.strip()
-
-
-def short_gpu(full):
-    return _squash(GPU_TAIL_RE.sub("", GPU_VENDOR_RE.sub("", full))) or full.strip()
-
-
-# The machines that produced this directory, and how to recognise a run from
-# one of them when it did not log its own hardware. The GPU name is the one
-# hardware fact even the older server_vit runs carry (in their monitor line);
-# logical core count separates them when GPU sampling was off.
-#   (gpu substring, logical cores, (server, cpu, gpu))
-KNOWN_HOSTS = (
-    ("rtx pro 6000", "172", ("SR650a V4", "6787P", "RTX PRO 6000")),
-    ("l4", "96", ("SR630 V4", "6740P", "L4")),
-)
-
-# Runs predating host logging record no hardware whatsoever - no GPU name, no
-# machine-wide core count, only a per-shard thread count that says nothing
-# about which box it was. Those are attributed to the machine running this
-# script, read live from DMI, lscpu and nvidia-smi.
-#
-# The measurement is of this box; the attribution of those rows to it is still
-# a guess, and a wrong one if you consolidate an SR630 tree while sitting on
-# the SR650a. It holds because the results tree is per-machine
-# (output_<server>_<cpu>_<gpu>/) and is normally consolidated in place. Rows
-# resolved this way are marked "probed" so the guess stays visible.
-FALLBACK_HOST = ("SR630 V4", "6740P", "L4")
+short_server = hostinfo.short_server
+short_cpu = hostinfo.short_cpu
+short_gpu = hostinfo.short_gpu
 
 
 @functools.lru_cache(maxsize=1)
-def local_host():
-    """This machine's (server, cpu, gpu) labels, probed once per run.
+def fallback_host():
+    """((server, cpu, gpu), source) for a run that logged no hardware.
 
-    Falls back to FALLBACK_HOST for any part the probe cannot determine, so a
-    missing nvidia-smi degrades one label rather than the whole row.
+    Runs predating host logging record nothing that says which box they ran
+    on. The tree does: it is per-machine, named output_<server>_<cpu>_<gpu>.
+    When that is the name this machine derives for itself, the tree is being
+    consolidated in place and the live probe gives the full labels; otherwise
+    the folder name's own three parts are used. Either way the row is marked,
+    so the attribution stays visible.
     """
-    probed = (
-        short_server(hostinfo.server_sku()),
-        short_cpu(hostinfo.cpu_sku()),
-        short_gpu(hostinfo.gpu_sku(use_torch=False)),
-    )
-    unknown = {"", "unknown", "none"}
-    resolved = tuple(
-        fallback if label.lower() in unknown else label
-        for label, fallback in zip(probed, FALLBACK_HOST)
-    )
-    return resolved, all(label.lower() not in unknown for label in probed)
+    tag = OUTPUT_ROOT.name.removeprefix("output_")
+    if tag == hostinfo.output_tag():
+        probed = (
+            short_server(hostinfo.server_sku()),
+            short_cpu(hostinfo.cpu_sku()),
+            short_gpu(hostinfo.gpu_sku(use_torch=False)),
+        )
+        return tuple("unknown" if label.lower() in hostinfo.UNKNOWN else label
+                     for label in probed), "probed"
+    parts = tag.split("_")
+    if len(parts) != 3:
+        parts = [tag or "unknown", "unknown", "unknown"]
+    return tuple(parts), "tree"
 
 LABEL_KEYS = ("server", "cpu", "gpu")
-
-
-# Scripts that run as a single process on the whole machine. Only for these
-# is a "Threads" count a statement about the host: run_multisocket.py gives
-# each shard a slice of the cores, so a sharded run's thread count says how
-# the run was carved up, not what it was carved out of.
-UNSHARDED_SCRIPTS = ("server_vit_benchmark", "server_dit_benchmark", "server_dit_vllm",
-                     "diag_vit_inference")
-
-
-def match_known_host(rec):
-    gpu = rec.get("gpu_sku", "").lower()
-    cores = rec.get("cpu_logical_count") or (
-        rec.get("threads", "") if rec.get("script") in UNSHARDED_SCRIPTS else ""
-    )
-    for gpu_key, core_key, labels in KNOWN_HOSTS:
-        if gpu and gpu_key in gpu:
-            return labels
-        if not gpu and cores == core_key:
-            return labels
-    return None
 
 
 def resolve_host(rec):
@@ -606,21 +541,12 @@ def resolve_host(rec):
         "cpu": short_cpu(rec.get("cpu_sku", "")),
         "gpu": short_gpu(rec.get("gpu_sku", "")),
     }
-    source = "logged" if all(labels.values()) else ""
-
-    known = match_known_host(rec)
-    if known and not all(labels.values()):
-        for key, value in zip(LABEL_KEYS, known):
-            if not labels[key]:
-                labels[key] = value
-        source = source or "inferred"
-
+    source = "logged"
     if not all(labels.values()):
-        host, probe_worked = local_host()
+        host, source = fallback_host()
         for key, value in zip(LABEL_KEYS, host):
             if not labels[key]:
                 labels[key] = value
-        source = "probed" if probe_worked else "assumed"
 
     rec.update(labels)
     rec["host_source"] = source
@@ -1241,11 +1167,11 @@ def main():
     print()
     for (server, cpu, gpu, source), n in sorted(hosts.items()):
         print(f"  {server:12} {cpu:8} {gpu:14} {source:9} {n:4d} runs")
-    attributed = sum(n for k, n in hosts.items() if k[3] in ("probed", "assumed"))
+    attributed = sum(n for k, n in hosts.items() if k[3] != "logged")
     if attributed:
-        host, probe_worked = local_host()
-        how = ("this machine, probed live via lscpu/nvidia-smi"
-               if probe_worked else "the hardcoded fallback (live probe failed)")
+        host, source = fallback_host()
+        how = ("this machine, probed live" if source == "probed"
+               else f"taken from the tree's name, {OUTPUT_ROOT.name}")
         print(f"  note: {attributed} runs logged no hardware; attributed to "
               f"{' / '.join(host)}\n        - {how}")
 

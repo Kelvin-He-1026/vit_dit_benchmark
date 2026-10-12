@@ -21,11 +21,28 @@ DATASET_DIR = REPO_ROOT / "dataset"
 MODELS_DIR = REPO_ROOT / "models"
 HF_HUB_CACHE_DIR = REPO_ROOT / "hf_hub_cache"
 
-# Results are filed per machine, since several boxes feed this repo and a run
-# is only comparable if you know which one produced it. Override when running
-# elsewhere: BENCH_OUTPUT_ROOT=output_SR650a_6787P_RTXPRO6000 python -m ...
-OUTPUT_ROOT = Path(os.environ.get("BENCH_OUTPUT_ROOT",
-                                  REPO_ROOT / "output_SR630_6740_L4"))
+
+
+def _output_root():
+    """BENCH_OUTPUT_ROOT if set, else output_<server>_<cpu>_<gpu> for this box.
+
+    Results are filed per machine, since several boxes feed this repo and a
+    run is only comparable if you know which one produced it. The name comes
+    from what the machine reports about itself (common/hostinfo.py), so a
+    fresh clone files its results correctly with nothing to configure;
+    BENCH_SERVER supplies the server name where the machine cannot.
+    """
+    override = os.environ.get("BENCH_OUTPUT_ROOT")
+    if override:
+        return Path(override)
+    from common import hostinfo
+    return REPO_ROOT / f"output_{hostinfo.output_tag()}"
+
+
+OUTPUT_ROOT = _output_root()
+# Handed down so replica processes and the scripts a sweep launches use the
+# same tree without probing the hardware again.
+os.environ["BENCH_OUTPUT_ROOT"] = str(OUTPUT_ROOT)
 
 os.environ.setdefault("HF_HUB_CACHE", str(HF_HUB_CACHE_DIR))
 

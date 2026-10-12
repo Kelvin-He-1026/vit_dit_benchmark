@@ -57,6 +57,7 @@ dist/
 *.err
 *.tmp
 *.lock
+*.status
 nohup.out
 core.*
 

@@ -1,0 +1,154 @@
+Timestamp  : 20261011_165716
+Run code   : int8-static-v2
+Script     : server_vit_benchmark
+Model      : microsoft/swin-base-patch4-window7-224
+Dataset    : ILSVRC/imagenet-1k
+Device     : cpu
+Server     : ThinkSystem SR630 V4
+CPU        : Intel(R) Xeon(R) 6740P
+CPU cores  : 96 logical, 96 physical, 2 sockets
+GPU        : NVIDIA L4 x2
+Dtype      : bfloat16
+Quant      : int8-static (static w8a8, calibrated ahead of time, per-channel weights, uint8 activations with fixed ranges, Linear and conv, rest bfloat16, torchao 0.18.0)
+Workload   : interactive
+Think time : 5 s
+SLA        : p95 end-to-end <= 100 ms
+Batch size : 16 (max)
+Batch wait : 5 ms
+Pre workers: 8
+Samples    : 256
+Warmup     : 5 s per level
+Measure    : 120 s per level
+Seed       : 42
+Compile    : enabled
+Processor  : slow
+Affinity   : 0-95
+Aff cores  : 96
+Aff/socket : 48,48
+Rep cores  : 8
+Rep spare  : 0
+Replicas   : 11
+Devices    : cpu
+CPU bind   : 0-47,48-87, split between replicas
+Threads    : 8 per replica
+Parent     : 8 cores the replicas leave free (preprocessing + scheduling)
+Self-test  : disabled
+Payloads   : 256 JPEGs, 67.4 KiB avg
+  replica 0: cpu, 8 intra-op threads, 8 cores visible
+  replica 1: cpu, 8 intra-op threads, 8 cores visible
+  replica 2: cpu, 8 intra-op threads, 8 cores visible
+  replica 3: cpu, 8 intra-op threads, 8 cores visible
+  replica 4: cpu, 8 intra-op threads, 8 cores visible
+  replica 5: cpu, 8 intra-op threads, 8 cores visible
+  replica 6: cpu, 8 intra-op threads, 8 cores visible
+  replica 7: cpu, 8 intra-op threads, 8 cores visible
+  replica 8: cpu, 8 intra-op threads, 8 cores visible
+  replica 9: cpu, 8 intra-op threads, 8 cores visible
+  replica 10: cpu, 8 intra-op threads, 8 cores visible
+Warmed buckets: 1,2,4,8,16 x3 on 11 replicas
+Resource monitor: RAPL counters unreadable, CPU power disabled
+Monitor    : host=psutil device=off every 250 ms
+
+=== SWEEP (req/s) ===
+[    8.00 req/s] n=   903  p50=   34.8  p95=    37.3  p99=    53.2 ms  batch=  1.0  cpu=  1.8c  gpu=  nan%  PASS  ok
+           routed: r0=87 (9%)  r1=87 (9%)  r2=87 (9%)  r3=87 (9%)  r4=87 (9%)  r5=86 (9%)  r6=87 (9%)  r7=86 (9%)  r8=85 (9%)  r9=86 (9%)  r10=86 (9%)
+[   16.00 req/s] n=  1871  p50=   34.9  p95=    37.7  p99=    50.6 ms  batch=  1.0  cpu=  3.6c  gpu=  nan%  PASS  ok
+           routed: r0=179 (9%)  r1=180 (9%)  r2=177 (9%)  r3=176 (9%)  r4=178 (9%)  r5=178 (9%)  r6=178 (9%)  r7=178 (9%)  r8=178 (9%)  r9=178 (9%)  r10=177 (9%)
+[   32.00 req/s] n=  3771  p50=   35.0  p95=    38.4  p99=    56.2 ms  batch=  1.0  cpu=  7.4c  gpu=  nan%  PASS  ok
+           routed: r0=358 (9%)  r1=355 (9%)  r2=357 (9%)  r3=356 (9%)  r4=358 (9%)  r5=360 (9%)  r6=357 (9%)  r7=358 (9%)  r8=359 (9%)  r9=360 (9%)  r10=357 (9%)
+[   64.00 req/s] n=  7722  p50=   35.3  p95=    43.2  p99=    55.8 ms  batch=  1.0  cpu= 15.0c  gpu=  nan%  PASS  ok
+           routed: r0=726 (9%)  r1=733 (9%)  r2=736 (9%)  r3=729 (9%)  r4=724 (9%)  r5=726 (9%)  r6=723 (9%)  r7=735 (9%)  r8=735 (9%)  r9=731 (9%)  r10=727 (9%)
+[  128.00 req/s] n= 15360  p50=   35.8  p95=    48.1  p99=    59.4 ms  batch=  1.0  cpu= 29.6c  gpu=  nan%  PASS  ok
+           routed: r0=1446 (9%)  r1=1444 (9%)  r2=1461 (9%)  r3=1456 (9%)  r4=1440 (9%)  r5=1462 (9%)  r6=1437 (9%)  r7=1460 (9%)  r8=1461 (9%)  r9=1462 (9%)  r10=1460 (9%)
+[  256.00 req/s] n= 30871  p50=   38.4  p95=    71.0  p99=   111.2 ms  batch=  1.4  cpu= 55.5c  gpu=  nan%  PASS  ok
+           routed: r0=2946 (9%)  r1=2939 (9%)  r2=2922 (9%)  r3=2916 (9%)  r4=2895 (9%)  r5=2944 (9%)  r6=2873 (9%)  r7=2919 (9%)  r8=2887 (9%)  r9=2966 (9%)  r10=2923 (9%)
+[  512.00 req/s] n= 61340  p50=  121.8  p95=   256.6  p99=   332.8 ms  batch=  6.5  cpu= 74.2c  gpu=  nan%  FAIL  p95 256.6 ms > 100 ms
+           routed: r0=5893 (9%)  r1=5819 (9%)  r2=5681 (9%)  r3=5793 (9%)  r4=5846 (9%)  r5=5723 (9%)  r6=5645 (9%)  r7=5963 (9%)  r8=5754 (9%)  r9=5811 (9%)  r10=5919 (9%)
+[  362.04 req/s] n= 43529  p50=   52.3  p95=   119.0  p99=   204.7 ms  batch=  2.6  cpu= 67.3c  gpu=  nan%  FAIL  p95 119.0 ms > 100 ms
+           routed: r0=4174 (9%)  r1=4121 (9%)  r2=4136 (9%)  r3=4161 (9%)  r4=4144 (9%)  r5=3937 (9%)  r6=4014 (9%)  r7=4182 (9%)  r8=4066 (9%)  r9=4190 (9%)  r10=4184 (9%)
+[  304.44 req/s] n= 36683  p50=   45.0  p95=    95.4  p99=   126.4 ms  batch=  1.8  cpu= 62.0c  gpu=  nan%  PASS  ok
+           routed: r0=3471 (9%)  r1=3462 (9%)  r2=3474 (9%)  r3=3494 (9%)  r4=3488 (9%)  r5=3331 (9%)  r6=3343 (9%)  r7=3535 (9%)  r8=3526 (9%)  r9=3538 (9%)  r10=3520 (9%)
+[  331.99 req/s] n= 39896  p50=   49.3  p95=   111.8  p99=   195.6 ms  batch=  2.2  cpu= 65.1c  gpu=  nan%  FAIL  p95 111.8 ms > 100 ms
+           routed: r0=3810 (9%)  r1=3845 (9%)  r2=3829 (9%)  r3=3826 (9%)  r4=3904 (9%)  r5=3620 (9%)  r6=3735 (9%)  r7=3704 (9%)  r8=3776 (9%)  r9=3806 (9%)  r10=3672 (9%)
+[  317.92 req/s] n= 38204  p50=   47.6  p95=   107.7  p99=   140.6 ms  batch=  2.0  cpu= 63.8c  gpu=  nan%  FAIL  p95 107.7 ms > 100 ms
+           routed: r0=3573 (9%)  r1=3658 (9%)  r2=3685 (9%)  r3=3623 (9%)  r4=3687 (9%)  r5=3559 (9%)  r6=3509 (9%)  r7=3684 (9%)  r8=3599 (9%)  r9=3675 (9%)  r10=3516 (9%)
+
+=== RESULT ===
+sla_ms                  : 100
+sla_seconds             : 0.1000
+sla_percentile          : 95
+workload                : interactive
+max_qps                 : 304.44
+max_concurrent_inflight : 15.76
+think_time_s            : 5
+max_concurrent_users    : 1537.9
+images_per_second       : 305.692
+
+users by think time (Little's Law, same measurement):
+  think_time=  0.0s        :       15.8 users
+  think_time=  1.0s        :      320.2 users
+  think_time=  2.0s        :      624.6 users
+  think_time=  5.0s        :     1537.9 users
+  think_time= 10.0s        :     3060.1 users
+
+at the winning level:
+  requests_measured     : 36683
+  p50_ms                : 45.03
+  p95_ms                : 95.35
+  p99_ms                : 126.35
+  max_ms                : 715.68
+  avg_ms_per_image      : 51.757
+  mean_batch_size       : 1.81
+  queue_depth_max       : 6
+  p95_drift             : x1.132
+  p50_drift             : x1.025
+  service_capacity_qps  : 462.14
+  capacity_bound_by     : inference
+  rho_measured          : 0.661
+
+  where the p95 budget goes (p95 of each stage):
+    harness_lag_ms      : 1.54
+    preprocess_ms       : 14.81
+    queue_wait_ms       : 6.51
+    inference_ms        : 65.89
+
+  where the mean goes (mean of each stage; they sum to avg_ms_per_image):
+    harness_lag_mean_ms : 0.77
+    preprocess_mean_ms  : 7.13
+    queue_wait_mean_ms  : 5.05
+    inference_mean_ms   : 38.80
+
+  capacity by stage (req/s if the stage were never idle, and how busy it is):
+    inference_capacity_qps : 462.14
+    preprocess_capacity_qps: 1122.18
+    inference_busy_s    : 873.13
+    inference_util      : 0.66
+    preprocess_util     : 0.27
+
+  resources (470 samples over the window):
+    cpu_logical_count   : 96
+    cpu_cores_busy_mean : 3.45
+    cpu_cores_busy_max  : 4.15
+    proc_cpu_pct_mean   : 344.7
+    sys_cpu_pct_mean    : 64.5
+    rss_gib_max         : 1.73
+    replica_rss_gib_max : 1.89
+    total_rss_gib_max   : 21.89
+    threads_max         : 101
+
+  top1_correct          : 31663
+  top1_accuracy         : 0.8632
+  images                : 36683
+
+=== LADDER ===
+        8.00 req/s   p95=    37.34 ms  n=   903  PASS  ok
+       16.00 req/s   p95=    37.69 ms  n=  1871  PASS  ok
+       32.00 req/s   p95=    38.37 ms  n=  3771  PASS  ok
+       64.00 req/s   p95=    43.21 ms  n=  7722  PASS  ok
+      128.00 req/s   p95=    48.12 ms  n= 15360  PASS  ok
+      256.00 req/s   p95=    70.96 ms  n= 30871  PASS  ok
+      512.00 req/s   p95=   256.56 ms  n= 61340  FAIL  p95 256.6 ms > 100 ms
+      362.04 req/s   p95=   119.02 ms  n= 43529  FAIL  p95 119.0 ms > 100 ms
+      304.44 req/s   p95=    95.35 ms  n= 36683  PASS  ok
+      331.99 req/s   p95=   111.76 ms  n= 39896  FAIL  p95 111.8 ms > 100 ms
+      317.92 req/s   p95=   107.66 ms  n= 38204  FAIL  p95 107.7 ms > 100 ms

@@ -4,6 +4,7 @@ Build the static int8 version of a ViT model, once, for --quant int8-static.
 
     python -m vit.build_static_int8 --model google/vit-base-patch16-224
     python -m vit.build_static_int8 --all
+    python -m vit.build_static_int8 --all --slim     # shrink files built earlier
 
 Loads the float32 model, calibrates it on ImageNet validation images run
 through the model's own image processor - the same preprocessing the
@@ -53,6 +54,12 @@ def parse_args():
         help="Intra-op threads for the calibration passes. Defaults to torch's.",
     )
     p.add_argument(
+        "--slim", action="store_true",
+        help="Do not build: rewrite already-built models without the unused "
+        "float32 weights older builds left in the file. No recalibration, so "
+        "the quantised model itself is unchanged.",
+    )
+    p.add_argument(
         "--force", action="store_true",
         help="Rebuild even if a saved model already exists.",
     )
@@ -98,6 +105,14 @@ def main():
     if args.threads is not None:
         torch.set_num_threads(args.threads)
     ensure_dirs()
+
+    if args.slim:
+        for model_name in (MODELS if args.all else [args.model]):
+            try:
+                quantize.slim_static(model_name, MODELS_DIR)
+            except RuntimeError as exc:  # not built yet
+                print(f"  {model_name}: skipped - {str(exc).splitlines()[0]}")
+        return
 
     ds = load_validation(DATASET_DIR)
     n = min(args.calib_images, len(ds))

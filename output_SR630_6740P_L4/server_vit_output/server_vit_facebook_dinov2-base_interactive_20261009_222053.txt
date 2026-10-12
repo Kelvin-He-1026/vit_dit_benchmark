@@ -1,0 +1,136 @@
+Timestamp  : 20261009_222053
+Run code   : bf16-compiled
+Script     : server_vit_benchmark
+Model      : facebook/dinov2-base
+Dataset    : ILSVRC/imagenet-1k
+Device     : cpu
+Server     : ThinkSystem SR630 V4
+CPU        : Intel(R) Xeon(R) 6740P
+CPU cores  : 96 logical, 96 physical, 2 sockets
+GPU        : NVIDIA L4 x2
+Dtype      : bfloat16
+Quant      : disabled
+Workload   : interactive
+Think time : 5 s
+SLA        : p95 end-to-end <= 100 ms
+Batch size : 16 (max)
+Batch wait : 5 ms
+Pre workers: 8
+Samples    : 256
+Warmup     : 5 s per level
+Measure    : 120 s per level
+Seed       : 42
+Compile    : enabled
+Processor  : slow
+Affinity   : 0-95
+Aff cores  : 96
+Aff/socket : 48,48
+Rep cores  : 12
+Rep spare  : 0
+Replicas   : 2
+Devices    : cpu
+CPU bind   : 0-11,48-59, split between replicas
+Threads    : 12 per replica
+Parent     : 72 cores the replicas leave free (preprocessing + scheduling)
+Self-test  : disabled
+Payloads   : 256 JPEGs, 67.4 KiB avg
+  replica 0: cpu, 12 intra-op threads, 12 cores visible
+  replica 1: cpu, 12 intra-op threads, 12 cores visible
+Warmed buckets: 1,2,4,8,16 x3 on 2 replicas
+Resource monitor: RAPL counters unreadable, CPU power disabled
+Monitor    : host=psutil device=off every 250 ms
+
+=== SWEEP (req/s) ===
+[    8.00 req/s] n=   903  p50=   30.3  p95=    33.9  p99=    46.6 ms  batch=  1.0  cpu=  2.1c  gpu=  nan%  PASS  ok
+           routed: r0=471 (50%)  r1=480 (50%)
+[   16.00 req/s] n=  1871  p50=   30.5  p95=    40.3  p99=    48.1 ms  batch=  1.1  cpu=  4.3c  gpu=  nan%  PASS  ok
+           routed: r0=964 (49%)  r1=993 (51%)
+[   32.00 req/s] n=  3771  p50=   30.9  p95=    50.2  p99=    69.8 ms  batch=  1.2  cpu=  8.5c  gpu=  nan%  PASS  ok
+           routed: r0=1921 (49%)  r1=2014 (51%)
+[   64.00 req/s] n=  7722  p50=   39.3  p95=    73.6  p99=   103.0 ms  batch=  1.9  cpu= 15.4c  gpu=  nan%  PASS  ok
+           routed: r0=3878 (48%)  r1=4147 (52%)
+[  128.00 req/s] n= 15360  p50=   99.1  p95=   190.5  p99=   219.3 ms  batch=  6.2  cpu= 22.4c  gpu=  nan%  FAIL  p95 190.5 ms > 100 ms
+           routed: r0=7827 (49%)  r1=8162 (51%)
+[   90.51 req/s] n= 10919  p50=   55.9  p95=   118.4  p99=   194.7 ms  batch=  3.0  cpu= 19.5c  gpu=  nan%  FAIL  p95 118.4 ms > 100 ms
+           routed: r0=5544 (49%)  r1=5809 (51%)
+[   76.11 req/s] n=  9147  p50=   43.9  p95=    96.6  p99=   123.5 ms  batch=  2.3  cpu= 17.5c  gpu=  nan%  PASS  ok
+           routed: r0=4590 (48%)  r1=4909 (52%)
+[   83.00 req/s] n=  9994  p50=   47.8  p95=   105.0  p99=   156.7 ms  batch=  2.6  cpu= 18.5c  gpu=  nan%  FAIL  p95 105.0 ms > 100 ms
+           routed: r0=5013 (48%)  r1=5369 (52%)
+[   79.48 req/s] n=  9566  p50=   44.2  p95=    99.2  p99=   118.2 ms  batch=  2.4  cpu= 17.9c  gpu=  nan%  PASS  ok
+           routed: r0=4776 (48%)  r1=5157 (52%)
+
+=== RESULT ===
+sla_ms                  : 100
+sla_seconds             : 0.1000
+sla_percentile          : 95
+workload                : interactive
+max_qps                 : 79.48
+max_concurrent_inflight : 4.08
+think_time_s            : 5
+max_concurrent_users    : 401.5
+images_per_second       : 79.717
+
+users by think time (Little's Law, same measurement):
+  think_time=  0.0s        :        4.1 users
+  think_time=  1.0s        :       83.6 users
+  think_time=  2.0s        :      163.0 users
+  think_time=  5.0s        :      401.5 users
+  think_time= 10.0s        :      798.9 users
+
+at the winning level:
+  requests_measured     : 9566
+  p50_ms                : 44.23
+  p95_ms                : 99.24
+  p99_ms                : 118.19
+  max_ms                : 195.09
+  avg_ms_per_image      : 51.329
+  mean_batch_size       : 2.35
+  queue_depth_max       : 7
+  p95_drift             : x0.976
+  p50_drift             : x0.987
+  service_capacity_qps  : 119.92
+  capacity_bound_by     : inference
+  rho_measured          : 0.665
+
+  where the p95 budget goes (p95 of each stage):
+    harness_lag_ms      : 1.12
+    preprocess_ms       : 6.95
+    queue_wait_ms       : 24.24
+    inference_ms        : 77.39
+
+  where the mean goes (mean of each stage; they sum to avg_ms_per_image):
+    harness_lag_mean_ms : 0.61
+    preprocess_mean_ms  : 5.39
+    queue_wait_mean_ms  : 9.15
+    inference_mean_ms   : 36.18
+
+  capacity by stage (req/s if the stage were never idle, and how busy it is):
+    inference_capacity_qps : 119.92
+    preprocess_capacity_qps: 1484.94
+    inference_busy_s    : 159.54
+    inference_util      : 0.66
+    preprocess_util     : 0.05
+
+  resources (478 samples over the window):
+    cpu_logical_count   : 96
+    cpu_cores_busy_mean : 0.88
+    cpu_cores_busy_max  : 1.29
+    proc_cpu_pct_mean   : 88.1
+    sys_cpu_pct_mean    : 18.7
+    rss_gib_max         : 1.58
+    replica_rss_gib_max : 1.18
+    total_rss_gib_max   : 3.94
+    threads_max         : 83
+  images                : 9566
+
+=== LADDER ===
+        8.00 req/s   p95=    33.86 ms  n=   903  PASS  ok
+       16.00 req/s   p95=    40.26 ms  n=  1871  PASS  ok
+       32.00 req/s   p95=    50.16 ms  n=  3771  PASS  ok
+       64.00 req/s   p95=    73.63 ms  n=  7722  PASS  ok
+      128.00 req/s   p95=   190.46 ms  n= 15360  FAIL  p95 190.5 ms > 100 ms
+       90.51 req/s   p95=   118.44 ms  n= 10919  FAIL  p95 118.4 ms > 100 ms
+       76.11 req/s   p95=    96.59 ms  n=  9147  PASS  ok
+       83.00 req/s   p95=   104.96 ms  n=  9994  FAIL  p95 105.0 ms > 100 ms
+       79.48 req/s   p95=    99.24 ms  n=  9566  PASS  ok

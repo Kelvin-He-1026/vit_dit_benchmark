@@ -54,6 +54,7 @@ matters for the same reason. Measured here on ViT-B bf16, batch 8, 16 cores:
 """
 
 import argparse
+import os
 import re
 import sys
 import time
@@ -76,6 +77,7 @@ from common import hostinfo, hub, quantize, resources, util
 from common.sweep import (
     ReplicaPool,
     as_list,
+    core_ranges,
     fmt,
     joined,
     parse_cores,
@@ -184,6 +186,21 @@ def parse_args():
         "mask and the per-replica torch thread count, so --threads is not "
         "needed alongside it. Strongly worth using on a multi-socket box: "
         "bfloat16 through AMX degrades badly across sockets.",
+    )
+    t.add_argument(
+        "--threads-per-replica",
+        type=int,
+        default=None,
+        help="CPU: give every replica exactly this many cores and threads, and "
+        "lay the replicas out for you - the same number on each socket (the "
+        "odd one, if any, on the first), each replica on one socket, cores "
+        "taken from the start of the socket. Recomputed for every count in "
+        "--replicas, so '--replicas 2,4,6 --threads-per-replica 12' is three "
+        "properly balanced layouts, which one --cpu-cores list cannot be. "
+        "Cores come from the launch affinity (taskset). Use this instead of "
+        "--cpu-cores / --threads. Keep it at or below the model's "
+        "attention-head count for ViT (12 for ViT-B, 16 for ViT-L): above it "
+        "every forward tears down and rebuilds part of the thread team.",
     )
     t.add_argument(
         "--replicas",
@@ -483,44 +500,132 @@ def build_pool(model_name, rows, n_images, log):
     return pool
 
 
+def _cores_by_socket(cores):
+    """{socket id: sorted cores} for `cores`, from sysfs. One group if unknown."""
+    groups = {}
+    for c in sorted(cores):
+        try:
+            with open(f"/sys/devices/system/cpu/cpu{c}/topology/"
+                      f"physical_package_id", encoding="ascii") as fh:
+                socket = int(fh.read())
+        except (OSError, ValueError):
+            return {0: sorted(cores)}
+        groups.setdefault(socket, []).append(c)
+    return groups
+
+
+def balanced_slices(n_replicas, threads, cores, sockets=None):
+    """One `threads`-core slice per replica, spread evenly over the sockets.
+
+    What the serving sweep's layout does, for the same reasons: a replica that
+    straddles sockets reads half its weights across the interconnect, and an
+    uneven split leaves one socket full - no turbo headroom, nowhere for a
+    stray thread to land - while the other idles, so the cell reports the
+    slower socket's pace. Replicas are dealt to the socket currently holding
+    the fewest (ties to the lower id), each taking the next unused run of
+    cores on it. Raises if they do not fit.
+    """
+    sockets = sockets if sockets is not None else _cores_by_socket(cores)
+    ids = sorted(sockets)
+    room = {sid: len(sockets[sid]) // threads for sid in ids}
+    held = {sid: 0 for sid in ids}
+    for _ in range(n_replicas):
+        open_ids = [sid for sid in ids if held[sid] < room[sid]]
+        if not open_ids:
+            fit = sum(room.values())
+            raise RuntimeError(
+                f"{n_replicas} replicas x {threads} threads do not fit: "
+                f"{len(cores)} cores over {len(ids)} socket(s) hold {fit} such "
+                f"replicas without one straddling a socket")
+        target = min(open_ids, key=lambda sid: (held[sid], sid))
+        held[target] += 1
+    slices = []
+    for sid in ids:
+        for k in range(held[sid]):
+            slices.append(sockets[sid][k * threads:(k + 1) * threads])
+    return slices
+
+
+def attention_heads(model_name):
+    """(model type, heads) from the model's config; (None, None) if unreadable."""
+    try:
+        from transformers import AutoConfig
+        cfg = hub.load_cached(AutoConfig.from_pretrained, model_name,
+                              cache_dir=str(MODELS_DIR))
+    except Exception:  # noqa: BLE001 - advisory only
+        return None, None
+    heads = getattr(cfg, "num_attention_heads", None)
+    return getattr(cfg, "model_type", None), heads if isinstance(heads, int) else None
+
+
 def sweep_combination(args, model_name, dtype_name, quant, pool, sampler,
                       batch_sizes, replica_counts, devices, core_slices_for,
-                      log):
-    """Every (replicas, batch size) cell for one model at one precision."""
-    is_dino = "dinov2" in model_name.lower()
-    max_replicas = max(replica_counts)
-    threads = args.threads if args.threads is not None else torch.get_num_threads()
-    slices = core_slices_for(max_replicas)
-    # Replicas share the machine, so the torch thread pool is divided between
-    # them rather than handed to each in full. Oversubscribing here is the
-    # classic way to make a multi-replica CPU run slower than a single one.
-    per_replica_threads = (len(slices[0]) if slices[0]
-                           else max(1, threads // max_replicas))
+                      affinity, log):
+    """Every (replicas, batch size) cell for one model at one precision.
 
-    def cfg_for(i):
-        return {
-            "model": model_name,
-            "models_dir": str(MODELS_DIR),
-            "device": devices[i % len(devices)],
-            "dtype": dtype_name,
-            "quant": quant,
-            "compile": args.compile,
-            "is_dino": is_dino,
-            "threads": per_replica_threads,
-            "cores": slices[i % len(slices)],
-        }
+    Each replica count gets its own set of replica processes, laid out for
+    that count. Reusing the processes of the largest count for the smaller
+    ones - as this used to - leaves the smaller cells on whatever slices come
+    first, which on two sockets means all on one.
+    """
+    is_dino = "dinov2" in model_name.lower()
+    threads = args.threads if args.threads is not None else torch.get_num_threads()
+    on_cpu = args.device == "cpu"
 
     rows, best = [], None
-    workers = ReplicaPool(max_replicas, _replica_main, cfg_for, pool, log=log)
-    first = workers.settings[0] if workers.settings else {}
-    detail = (f", {first['quantised']} of "
-              f"{first['quantised'] + first['skipped']} Linear layers quantised"
-              if first.get("quantised") else "")
-    log(f"  replica 0: {first.get('threads', '?')} intra-op threads, "
-        f"{first.get('interop', '?')} inter-op, "
-        f"{first.get('cores', '?')} cores visible{detail}")
-    try:
-        for n_replicas in replica_counts:
+    for n_replicas in replica_counts:
+        if args.threads_per_replica and on_cpu:
+            try:
+                slices = balanced_slices(n_replicas, args.threads_per_replica, affinity)
+            except RuntimeError as exc:
+                log(f"{n_replicas:>8}      -  skipped - {exc}")
+                continue
+            per_replica_threads = args.threads_per_replica
+        else:
+            slices = core_slices_for(n_replicas)
+            # Unpinned replicas share the machine, so the thread pool is
+            # divided between them rather than handed to each in full.
+            per_replica_threads = (len(slices[0]) if slices[0]
+                                   else max(1, threads // n_replicas))
+        used = sorted({c for sl in slices if sl for c in sl})
+        bind = core_ranges(used) if used else ""
+
+        def cfg_for(i, _slices=slices, _threads=per_replica_threads):
+            return {
+                "model": model_name,
+                "models_dir": str(MODELS_DIR),
+                "device": devices[i % len(devices)],
+                "dtype": dtype_name,
+                "quant": quant,
+                "compile": args.compile,
+                "is_dino": is_dino,
+                "threads": _threads,
+                "cores": _slices[i % len(_slices)],
+            }
+
+        # Keep this process - the counter sampler - off the replicas' cores
+        # while they run, when there are other cores to stand on. With none
+        # free it stays where it is: unlike the serving harness it does no
+        # per-image work, so a full machine is a legitimate offline layout.
+        free = sorted(set(affinity) - set(used)) if used else []
+        can_pin = hasattr(os, "sched_setaffinity")
+        if free and can_pin:
+            os.sched_setaffinity(0, free)
+        try:
+            workers = ReplicaPool(n_replicas, _replica_main, cfg_for, pool, log=log)
+        except RuntimeError as exc:
+            log(f"{n_replicas:>8}      -  skipped - {str(exc)[:300]}")
+            if affinity and can_pin:
+                os.sched_setaffinity(0, affinity)
+            continue
+        first = workers.settings[0] if workers.settings else {}
+        detail = (f", {first['quantised']} of "
+                  f"{first['quantised'] + first['skipped']} Linear layers quantised"
+                  if first.get("quantised") else "")
+        log(f"  {n_replicas} replica(s): {first.get('threads', '?')} intra-op "
+            f"threads each, {first.get('cores', '?')} cores visible"
+            f"{', pinned to ' + bind if bind else ', unpinned'}{detail}")
+        try:
             for bs in batch_sizes:
                 if bs > len(pool):
                     log(f"{n_replicas:>8} {bs:>6}  skipped (larger than the pool)")
@@ -532,6 +637,9 @@ def sweep_combination(args, model_name, dtype_name, quant, pool, sampler,
                 cell = {
                     "replicas": n_replicas,
                     "batch_size": bs,
+                    "threads": per_replica_threads,
+                    "cpu_bind": bind,
+                    "parent_cores": len(free) if used else None,
                     "images_per_second": rate,
                     # One replica's own pace. The aggregate (1000/rate) would
                     # be the interesting number only if a single stream
@@ -556,9 +664,11 @@ def sweep_combination(args, model_name, dtype_name, quant, pool, sampler,
                     f"{fmt(res.get('sys_cores_busy_mean')):>6} "
                     f"{fmt(res.get('cpu_power_w_mean')):>7} "
                     f"{fmt(cell.get('images_per_second_per_w'), 2):>9}")
-    finally:
-        workers.close()
-    return rows, best, per_replica_threads
+        finally:
+            workers.close()
+            if affinity and can_pin:
+                os.sched_setaffinity(0, affinity)
+    return rows, best, (best["threads"] if best else None)
 
 
 def write_combination(args, header, model_name, dtype_name, quant, rows, best,
@@ -573,8 +683,16 @@ def write_combination(args, header, model_name, dtype_name, quant, rows, best,
     lines.append(f"Model      : {model_name}")
     lines.append(f"Dtype      : {dtype_name}")
     lines.append(f"Quant      : {quantize.describe(quant)}")
-    lines.append(f"Compile    : {'enabled' if args.compile else 'disabled'}")
+    # Static int8 arrives compiled whatever --compile says.
+    compiled = args.compile or quantize.is_static(quant)
+    lines.append(f"Compile    : {'enabled' if compiled else 'disabled'}")
     lines.append(f"Devices    : {','.join(devices)}")
+    # Of the best cell: with several replica counts in one sweep the layout
+    # differs from count to count.
+    if best.get("cpu_bind"):
+        lines.append(f"CPU bind   : {best['cpu_bind']}, split between replicas")
+        lines.append(f"Rep cores  : {best['threads']}")
+        lines.append(f"Parent     : {best['parent_cores']} cores the replicas leave free")
     lines.append(f"Threads    : {per_replica_threads} per replica")
     lines.append("")
     lines.append("=== SWEEP (images/s) ===")
@@ -619,6 +737,10 @@ def write_combination(args, header, model_name, dtype_name, quant, rows, best,
         ("sys_cores_busy_max", "{:.2f}"),
         ("sys_cpu_pct_mean", "{:.1f}"),
         ("cpu_power_w_mean", "{:.1f}"),
+        # Host memory: the largest single replica, and this process plus all
+        # of them. Each replica holds its own copy of the model.
+        ("child_rss_gib_max", "{:.2f}"),
+        ("total_rss_gib_max", "{:.2f}"),
         ("gpu_util_pct_mean", "{:.1f}"),
         ("gpu_mem_used_gib_max", "{:.2f}"),
         ("gpu_power_w_mean", "{:.1f}"),
@@ -627,7 +749,8 @@ def write_combination(args, header, model_name, dtype_name, quant, rows, best,
         ("gpu_temp_c_max", "{:.0f}"),
     ):
         if key in best:
-            lines.append(f"  {key:<22}: {fmt_s.format(best[key])}")
+            label = "replica_rss_gib_max" if key == "child_rss_gib_max" else key
+            lines.append(f"  {label:<22}: {fmt_s.format(best[key])}")
     if resources.psutil is not None:
         lines.append(f"  {'cpu_logical_count':<22}: {resources.psutil.cpu_count()}")
     lines.append("")
@@ -661,6 +784,14 @@ def run_throughput(args, rows_ds, timestamp, header, log):
     precisions = (parse_precisions(args.precisions) if args.precisions
                   else [(args.dtype, args.quant)])
     cores = parse_cores(args.cpu_cores) if args.cpu_cores else []
+    if args.threads_per_replica and args.cpu_cores:
+        raise RuntimeError(
+            "--threads-per-replica lays the replicas out itself; drop "
+            "--cpu-cores, and use taskset to limit which cores it may use.")
+    # The launch mask (taskset, a cgroup, or everything), read once: the
+    # layouts are cut from it, and this process is moved around inside it.
+    affinity = (sorted(os.sched_getaffinity(0))
+                if hasattr(os, "sched_getaffinity") else [])
 
     def core_slices_for(n):
         return split_cores(cores, n)
@@ -681,10 +812,28 @@ def run_throughput(args, rows_ds, timestamp, header, log):
         f"device={sampler.gpu_name or 'off'} "
         f"cpu_power={'rapl' if sampler._rapl else 'off'} "
         f"every {args.sample_interval_ms:g} ms")
-    if cores:
-        log(f"CPU bind   : cores {joined(args.cpu_cores)} "
+    # Logged and also added to `header`, which is what every combination's
+    # result file starts with - the header was copied before this point.
+    layout_lines = []
+    if affinity:
+        by_socket = _cores_by_socket(affinity)
+        layout_lines += [
+            f"Affinity   : {core_ranges(affinity)}",
+            f"Aff cores  : {len(affinity)}",
+            f"Aff/socket : {','.join(str(len(by_socket[s])) for s in sorted(by_socket))}",
+        ]
+    if args.threads_per_replica and args.device == "cpu":
+        layout_lines.append(
+            f"Layout     : {args.threads_per_replica} cores and threads per "
+            f"replica, balanced across sockets for each replica count")
+    elif cores:
+        layout_lines.append(
+            f"Layout     : cores {joined(args.cpu_cores)} "
             f"({len(cores)} of {torch.get_num_threads()} logical), split "
-            f"between replicas")
+            f"evenly between the replicas of each count")
+    for line in layout_lines:
+        log(line)
+        header.append(line)
 
     summary, pools = [], {}
     sampler.start()
@@ -702,20 +851,39 @@ def run_throughput(args, rows_ds, timestamp, header, log):
                     log(f"--- {model_name} @ {precision_tag(dtype_name, quant)}"
                         f": skipped - {exc}")
                     continue
-                if quant != "none" and not args.compile:
+                if quantize.is_static(quant):
+                    try:
+                        quantize.static_ready(model_name, MODELS_DIR)
+                    except RuntimeError as exc:
+                        log("")
+                        log(f"--- {model_name} @ {precision_tag(dtype_name, quant)}"
+                            f": skipped - {exc}")
+                        continue
+                elif quant != "none" and not args.compile:
                     log("WARNING: --quant without --compile is usually slower "
                         "than plain bfloat16.")
+                # Learned from the serving sweep: ViT at more threads than
+                # attention heads shrinks and regrows its OpenMP team inside
+                # every forward (ViT-B: 17 ms at 12 threads, ~150 ms at 16 on
+                # a 16-core slice).
+                if args.threads_per_replica and args.device == "cpu":
+                    kind, heads = attention_heads(model_name)
+                    if kind == "vit" and heads and args.threads_per_replica > heads:
+                        log(f"WARNING: {args.threads_per_replica} threads per "
+                            f"replica is above {model_name}'s {heads} attention "
+                            f"heads; expect it to be slower than {heads}.")
 
                 log("")
                 log(f"--- {model_name} @ {precision_tag(dtype_name, quant)} "
                     f"(devices={','.join(devices)}, "
-                    f"compile={'on' if args.compile else 'off'})")
+                    f"compile={'on' if args.compile or quantize.is_static(quant) else 'off'})")
                 log(f"{'replicas':>8} {'batch':>6} {'img/s':>10} {'ms/img':>8} "
                     f"{'launch':>7} {'gpu_ms':>7} {'gpu%':>6} {'gpuW':>7} {'cores':>6} {'cpuW':>7} "
                     f"{'img/s/W':>9}")
                 cells, best, per_replica_threads = sweep_combination(
                     args, model_name, dtype_name, quant, pool, sampler,
-                    batch_sizes, replica_counts, devices, core_slices_for, log)
+                    batch_sizes, replica_counts, devices, core_slices_for,
+                    affinity, log)
                 if best is None:
                     log("  no cell ran")
                     continue

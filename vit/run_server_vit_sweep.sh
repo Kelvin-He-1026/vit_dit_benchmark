@@ -82,7 +82,8 @@ if [[ $DRY_RUN != 1 ]]; then
 fi
 
 PY=cv_env/bin/python
-OUT_DIR="${BENCH_OUTPUT_ROOT:-output_SR630_6740_L4}/server_vit_output"
+source common/host.sh
+OUT_DIR="$HOST_OUTPUT_ROOT/server_vit_output"
 LOG=server_vit_sweep_${RUN_CODE:+${RUN_CODE}_}$(date +%Y%m%d_%H%M%S).log
 # What is running right now, overwritten at every cell: `cat` it for a
 # one-glance answer instead of scrolling the log.
@@ -106,11 +107,22 @@ COMMON=(--device cpu --dtype bfloat16
 # need --compile, so they turn it on; COMPILE=1 turns it on for bfloat16 too.
 # A cell only counts as done if its Quant and Compile lines match, so the
 # same grid can be run once per precision without FORCE.
+#
+# "int8-static" cannot run uncompiled - its int8 kernels only exist once the
+# graph is lowered - so it always compiles. "int8" compiles by default, but
+# COMPILE=0 is honoured for it: the startup-quantised model does run eagerly,
+# usually slower, which is exactly what an uncompiled 8-bit sweep measures.
 QUANT="${QUANT:-none}"
-COMPILE="${COMPILE:-0}"
+COMPILE="${COMPILE:-}"
 case "$QUANT" in
-  none) ;;
-  int8|int8-static) COMPILE=1 ;;
+  none) COMPILE="${COMPILE:-0}" ;;
+  int8) COMPILE="${COMPILE:-1}" ;;
+  int8-static)
+    if [[ $COMPILE == 0 ]]; then
+      echo "QUANT=int8-static cannot run without compile; use QUANT=int8 COMPILE=0" >&2
+      exit 1
+    fi
+    COMPILE=1 ;;
   *) echo "QUANT must be none, int8 or int8-static, got '$QUANT'" >&2; exit 1 ;;
 esac
 [[ $QUANT != none ]] && COMMON+=(--quant "$QUANT")
@@ -162,14 +174,23 @@ SPECS_INT8=(
   # bfloat16 cells use.
   "cnn|microsoft/resnet-50|${RESNET_INT8_THREADS:-22}|$SLA_SMALL|2,3"
 )
-[[ $QUANT != none ]] && SPECS=("${SPECS_INT8[@]}")
+# GRID=int8 runs that narrower grid at any precision - what a compiled
+# bfloat16 baseline needs to line up cell for cell with the 8-bit results.
+GRID="${GRID:-}"
+[[ $QUANT != none || $GRID == int8 ]] && SPECS=("${SPECS_INT8[@]}")
 MIN_REPLICAS=2
 
 # ---- core layout -------------------------------------------------------------
-# Two sockets of 48 (0-47, 48-95), and every cell runs with the whole machine
-# as its affinity mask:
+# The socket count and size come from the machine (common/host.sh); the
+# numbers quoted in this file are from the box it was written on, two sockets
+# of 48 (0-47, 48-95). Every cell runs with the whole machine as its affinity
+# mask:
 #
 #   taskset -c 0-47,48-95
+#
+# A one-socket machine puts every replica on that socket; with more than two,
+# the first two are used. A cell named explicitly in SPECS that does not fit
+# this machine's sockets is reported and skipped.
 #
 # Each replica gets exactly `threads` contiguous cores on one socket - never
 # straddling the two, so its memory stays local (first touch). Replicas are
@@ -182,10 +203,14 @@ MIN_REPLICAS=2
 # and is what caps the replica count: 8 x 12 would fit the machine exactly but
 # leave the harness nothing, and preprocessing would then run on the replicas'
 # cores (measured at 6 x 16: 5-11 req/s where 4 x 16 reached 215).
-SOCKET_CORES=48
+SOCKET_CORES=$HOST_SOCKET_CORES
+SOCKETS=$(( HOST_SOCKETS > 2 ? 2 : HOST_SOCKETS ))
+S0=${HOST_SOCKET_FIRST[0]}
+S1=${HOST_SOCKET_FIRST[1]:-}
 PARENT_MIN="${PARENT_MIN:-4}"
-MASK="0-$((SOCKET_CORES - 1)),${SOCKET_CORES}-$((2 * SOCKET_CORES - 1))"
-MASK_CORES=$((2 * SOCKET_CORES))
+MASK=${HOST_SOCKET_RANGES[0]}
+(( SOCKETS == 2 )) && MASK+=",${HOST_SOCKET_RANGES[1]}"
+MASK_CORES=$((SOCKETS * SOCKET_CORES))
 
 log() { echo "$*" | tee -a "$LOG"; }
 
@@ -203,12 +228,12 @@ BALANCED="${BALANCED:-1}"
 max_replicas() {
   local threads=$1
   if [[ $BALANCED == 1 ]]; then
-    echo $(( 2 * ((SOCKET_CORES - (PARENT_MIN + 1) / 2) / threads) ))
+    echo $(( SOCKETS * ((SOCKET_CORES - (PARENT_MIN + SOCKETS - 1) / SOCKETS) / threads) ))
     return
   fi
   local per_socket=$(( SOCKET_CORES / threads ))
-  local by_total=$(( (2 * SOCKET_CORES - PARENT_MIN) / threads ))
-  local by_socket=$(( 2 * per_socket ))
+  local by_total=$(( (SOCKETS * SOCKET_CORES - PARENT_MIN) / threads ))
+  local by_socket=$(( SOCKETS * per_socket ))
   echo $(( by_total < by_socket ? by_total : by_socket ))
 }
 
@@ -216,6 +241,7 @@ max_replicas() {
 layout() {
   local replicas=$1 threads=$2
   local on0=$(( (replicas + 1) / 2 )) on1=$(( replicas / 2 ))
+  (( SOCKETS == 1 )) && on0=$replicas on1=0
   local used0=$(( on0 * threads )) used1=$(( on1 * threads ))
   CELL_NOTE=""
   CELL_MASK=$MASK
@@ -223,9 +249,10 @@ layout() {
     log "!!! ${replicas}x${threads} needs $used0 cores on one socket; only $SOCKET_CORES exist"
     return 1
   fi
-  CELL_CORES="0-$((used0 - 1)),${SOCKET_CORES}-$((SOCKET_CORES + used1 - 1))"
+  CELL_CORES="$S0-$((S0 + used0 - 1))"
+  (( used1 > 0 )) && CELL_CORES+=",$S1-$((S1 + used1 - 1))"
   CELL_PARENT=$(( MASK_CORES - used0 - used1 ))
-  if (( on0 != on1 )); then
+  if (( SOCKETS == 2 && on0 != on1 )); then
     CELL_NOTE="$on0 replicas on socket 0, $on1 on socket 1"
   fi
 }
@@ -314,7 +341,7 @@ plan() {
     elif [[ $mode == max ]]; then
       echo "${top}x${threads}"
     else
-      for (( r = MIN_REPLICAS; r <= top; r += (BALANCED == 1 ? 2 : 1) )); do
+      for (( r = MIN_REPLICAS; r <= top; r += (BALANCED == 1 && SOCKETS == 2 ? 2 : 1) )); do
         echo "${r}x${threads}"
       done
     fi
@@ -346,4 +373,4 @@ done
 log ""
 echo "=== $(date '+%F %T') sweep finished ($CELL_TOTAL cells)" > "$STATUS"
 log "=== $(date '+%F %T') sweep finished, consolidating"
-$PY consolidate_results_sr630.py 2>&1 | tee -a "$LOG"
+$PY consolidate_results.py 2>&1 | tee -a "$LOG"

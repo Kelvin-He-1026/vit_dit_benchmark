@@ -1,0 +1,60 @@
+Timestamp  : 20261011_212403
+Run code   : offline-max
+Dataset    : ILSVRC/imagenet-1k
+Device     : cpu
+Server     : ThinkSystem SR630 V4
+CPU        : Intel(R) Xeon(R) 6740P
+CPU cores  : 96 logical, 96 physical, 2 sockets
+GPU        : NVIDIA L4 x2
+Mode       : offline throughput sweep (no SLA, no arrival model)
+Samples    : 256 preprocessed once and cycled
+Batch size : sweep 8,16,32
+Replicas   : sweep 4,5,6
+Precisions : sweep bf16
+Measure    : 60 s per cell
+Warmup     : 5 s per cell
+Affinity   : 0-95
+Aff cores  : 96
+Aff/socket : 48,48
+Layout     : 16 cores and threads per replica, balanced across sockets for each replica count
+Model      : google/vit-large-patch16-224
+Dtype      : bfloat16
+Quant      : disabled
+Compile    : disabled
+Devices    : cpu
+CPU bind   : 0-95, split between replicas
+Rep cores  : 16
+Parent     : 0 cores the replicas leave free
+Threads    : 16 per replica
+
+=== SWEEP (images/s) ===
+replicas  batch      img/s   ms/img  launch  gpu_ms   gpu%    gpuW  cores    cpuW   img/s/W
+       4      8      148.9   26.856  211.88       -      -       -   63.9       -         -
+       4     16      146.0   27.397  435.02       -      -       -   63.6       -         -
+       4     32      143.5   27.874  887.84       -      -       -   62.7       -         -
+       5      8      189.4   26.396  212.76       -      -       -   79.9       -         -
+       5     16      175.6   28.476  443.60       -      -       -   78.0       -         -
+       5     32      180.4   27.715  879.93       -      -       -   78.2       -         -
+       6      8      226.4   26.502  213.63       -      -       -   95.7       -         -
+       6     16      190.0   31.584  508.60       -      -       -   89.1       -         -
+       6     32      201.0   29.857  944.77       -      -       -   93.3       -         -
+
+=== RESULT ===
+images_per_second       : 226.397
+best_batch_size         : 8
+best_replicas           : 6
+ms_per_image_per_replica: 26.502
+images                  : 13616
+measured_s              : 60.142
+cpu_launch_ms           : 213.630
+
+at the best cell:
+  sys_cores_busy_mean   : 95.74
+  sys_cores_busy_max    : 96.00
+  sys_cpu_pct_mean      : 99.7
+  replica_rss_gib_max   : 1.44
+  total_rss_gib_max     : 10.30
+  cpu_logical_count     : 96
+
+  power_source          : none - no NVML device, and the RAPL counters are not readable
+  (CPU power needs read access to /sys/class/powercap/intel-rapl:*/energy_uj)

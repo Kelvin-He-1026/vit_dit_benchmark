@@ -7,7 +7,7 @@ and huggingface_hub 1.x, which cannot coexist with the 4.x / 0.x pins the
 diffusers-based scripts need.
 
 Main harness (everything under `vit/`, `dit/` and `common/`, plus
-`consolidate_results_sr630.py`):
+`consolidate_results.py`):
 
 ```bash
 python -m venv cv_env
@@ -20,6 +20,36 @@ vLLM harness (`vllm_dit_vit_benchmark.py`) only:
 python -m venv vllm_env
 ./vllm_env/bin/pip install -U -r requirements-vllm.txt
 ```
+
+## Running on another machine
+
+Nothing in the code names a server, CPU or GPU. Clone, create the
+environments above, and run: each script reads the machine it is on.
+
+```bash
+python -m common.hostinfo           # what this machine reports about itself
+python -m common.hostinfo --shell   # the same, as the sweep scripts read it
+```
+
+- **Results tree.** Results are filed under `output_<server>_<cpu>_<gpu>/`,
+  named from DMI, `lscpu` and the GPU driver - `output_SR630_6740P_L4/` on a
+  ThinkSystem SR630 V4 with Xeon 6740P and L4s. A box with no GPU ends in
+  `nogpu`. `BENCH_OUTPUT_ROOT=<dir>` overrides the whole path.
+- **Server name.** If the machine cannot name itself (a VM, a white box), the
+  hostname is used. `BENCH_SERVER=<name>` sets it explicitly; it goes into the
+  folder name and into every result's `Server` line.
+- **Core layout.** The sweep scripts take the socket count, cores per socket
+  and core ranges from the machine (`common/host.sh`), using one logical CPU
+  per physical core. GPU cells pin to the socket GPU 0 is attached to. Core
+  ranges in the examples below (`0-47`, `48-95`) are from a 2 x 48-core box;
+  substitute the `Sockets` line `python -m common.hostinfo` prints.
+- **Consolidating.** `python consolidate_results.py` reads this machine's
+  tree. To consolidate a tree copied from elsewhere, point at it:
+  `BENCH_OUTPUT_ROOT=output_SR650a_6787P_RTXPRO6000 python consolidate_results.py`.
+
+The sweep grids themselves were tuned on 48-core sockets. Replica ranges
+scale with the socket size; the few cells named explicitly (the int8 grid,
+ResNet-50's thread counts) are skipped with a message where they do not fit.
 
 For ImageNet, first accept the terms on:
 https://huggingface.co/datasets/ILSVRC/imagenet-1k
@@ -36,7 +66,8 @@ hf auth login
 common/                      shared by both families; imports neither
   paths.py                   repo paths, per-machine OUTPUT_ROOT, sets HF_HUB_CACHE
   util.py                    percentile, slope, sync
-  hostinfo.py                server / CPU / GPU identification for result headers
+  hostinfo.py                server / CPU / GPU / socket layout, read from the machine
+  host.sh                    the same, sourced by the sweep scripts
   quantize.py                W8A8 recipes behind --quant
   resources.py               CPU / GPU / power sampling
   sweep.py                   replica pool, core splitting, --precisions parsing
@@ -50,7 +81,8 @@ dit/                         DiT text-to-image; imports common/ only
   dit_benchmark.py           offline latency and --throughput sweep
   server_dit_benchmark.py    serving capacity under a latency SLA
   run_server_dit_sweep.sh    the full server_dit matrix, resumable
-consolidate_results_sr630.py reads every result file, writes the CSVs
+  run_server_dit_layout_sweep.sh  CPU replicas x threads x batch, resumable
+consolidate_results.py reads every result file, writes the CSVs
 ```
 
 Run scripts from the repo root as modules, e.g.
@@ -118,6 +150,15 @@ python -m vit.server_vit_benchmark --model google/vit-base-patch16-224 \
     --replicas 4 --threads 12 --cpu-cores 0-23,48-71
 ```
 
+Models built before the file was slimmed carry the float32 originals of every
+quantised weight (ViT-B: 424 MiB where 87 is needed). They still load - the
+unused weights are dropped at load time - but `--slim` rewrites them in place,
+without recalibrating:
+
+```bash
+python -m vit.build_static_int8 --all --slim
+```
+
 Compare its `top1_accuracy` against the bf16 run of the same model before
 trusting the speed. The DINOv2 models have no classifier, so they have no such
 check.
@@ -154,6 +195,21 @@ python -m vit.vit_benchmark --throughput --device cuda --devices cuda:0,cuda:1 \
     --replicas 1,2 --batch-sizes 8,16,32,64 --dtype bfloat16 --compile \
     --measure-s 10 --warmup-s 5
 ```
+
+On CPU, describe the layout with `--threads-per-replica` and let the script
+place the replicas: each gets exactly that many cores on one socket, the same
+number per socket, recomputed for every count in `--replicas`:
+
+```bash
+taskset -c 0-47,48-95 python -m vit.vit_benchmark --throughput --device cpu \
+    --models google/vit-base-patch16-224 --precisions bf16 \
+    --replicas 2,4,6,8 --threads-per-replica 12 \
+    --batch-sizes 1,4,8,16,32,64 --measure-s 60 --warmup-s 5
+```
+
+Unlike the serving benchmark, nothing here needs cores of its own - inputs are
+preprocessed up front - so filling the machine (8 x 12) is a valid layout.
+`--precisions int8-static` runs the models built by `vit.build_static_int8`.
 
 Replicas are separate processes, one model each, assigned to `--devices`
 round-robin - a single Python thread cannot keep a fast GPU fed, and threads
@@ -244,7 +300,7 @@ default 100 scored requests takes 15-30 min, so expect 1-2 h per CPU cell.
 
 ## Consolidated output
 
-`python consolidate_results_sr630.py` reads every `.txt` under the results tree
+`python consolidate_results.py` reads every `.txt` under the results tree
 and writes two CSVs next to them:
 
 | File | One row per | Use it for |
