@@ -56,10 +56,11 @@ def main():
 
     torch.set_num_threads(args.threads)
     torch.set_num_interop_threads(1)
-    cls = AutoModel if "dinov2" in args.model.lower() else AutoModelForImageClassification
-    model = hub.load_cached(cls.from_pretrained, args.model, cache_dir=str(MODELS_DIR))
+    from common import vision_models
+    model = vision_models.load_model(args.model, MODELS_DIR)
     model = model.to(torch.bfloat16).eval()
-    x = torch.randn(args.batch_size, 3, 224, 224, dtype=torch.bfloat16)
+    side = vision_models.YOLO_MODELS.get(args.model, (None, None, 224))[2]
+    x = torch.randn(args.batch_size, 3, side, side, dtype=torch.bfloat16)
 
     times = []
     with torch.inference_mode():

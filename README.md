@@ -163,6 +163,20 @@ Compare its `top1_accuracy` against the bf16 run of the same model before
 trusting the speed. The DINOv2 models have no classifier, so they have no such
 check.
 
+### OpenVINO backend
+
+`--backend openvino` (both ViT benchmarks) runs the forward pass on
+OpenVINO's CPU plugin instead of PyTorch. The model is converted once on first
+use and saved under `models/openvino/<org>_<name>/`; replicas, pinning,
+batching and timing are unchanged, so the two backends compare cell for cell.
+bfloat16 or float32 only - no `--quant`, no `--compile`.
+
+```bash
+python -m vit.server_vit_benchmark --backend openvino --model google/vit-base-patch16-224 \
+    --device cpu --dtype bfloat16 --replicas 6 --threads 12 --cpu-cores 0-35,48-83
+BACKEND=openvino RUN_CODE=openvino-v1 bash vit/run_server_vit_sweep.sh
+```
+
 ### Serving from several replicas (both sockets)
 
 `server_vit_benchmark.py --replicas N` runs N inference processes behind one

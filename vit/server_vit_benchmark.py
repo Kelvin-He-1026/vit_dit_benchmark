@@ -128,7 +128,7 @@ import torch
 from PIL import Image
 from transformers import AutoImageProcessor, AutoModel, AutoModelForImageClassification
 
-from common import hostinfo, hub, quantize, sweep, util
+from common import hostinfo, hub, ov_backend, quantize, sweep, util, vision_models
 from common.util import percentile, slope
 from vit.vit_common import DATASET_NAME, MODELS, load_validation
 
@@ -226,6 +226,16 @@ def parse_args():
         "at 4. So fast only wins if you constrain --threads, and never by "
         "much. Whichever you pick is logged as part of the result - the two "
         "are not comparable.",
+    )
+    p.add_argument(
+        "--backend",
+        choices=ov_backend.BACKENDS,
+        default="pytorch",
+        help="What runs the forward pass. 'openvino' converts the model once "
+        "(saved under models/openvino/) and runs it on OpenVINO's CPU plugin, "
+        "at --dtype bfloat16 or float32, with --threads per replica. CPU only, "
+        "no --quant, no --compile. Queue, batching, preprocessing, replicas "
+        "and pinning are unchanged, so the two backends compare cell for cell.",
     )
     p.add_argument(
         "--compile",
@@ -665,13 +675,16 @@ def _vit_replica(conn, cfg, _payload):
     try:
         if is_cuda:
             _torch.cuda.set_device(device)
-        if _quantize.is_static(cfg["quant"]):
+        if cfg.get("backend") == "openvino":
+            # Converted by the parent before any replica started.
+            from common import ov_backend as _ov
+            model = _ov.load(cfg["model"], cfg["models_dir"], cfg["threads"], cfg["dtype"])
+        elif _quantize.is_static(cfg["quant"]):
             # Calibrated ahead of time and saved; it arrives already compiled.
             model = _quantize.load_static(cfg["model"], cfg["models_dir"], dtype)
         else:
-            cls = AutoModel if cfg["is_dino"] else AutoModelForImageClassification
-            model = _hub.load_cached(cls.from_pretrained, cfg["model"],
-                                     cache_dir=cfg["models_dir"])
+            from common import vision_models as _vm
+            model = _vm.load_model(cfg["model"], cfg["models_dir"])
             model = model.to(device=device, dtype=dtype).eval()
             model = _quantize.apply(model, cfg["quant"])
             if cfg["compile"]:
@@ -1216,6 +1229,8 @@ def main():
         raise RuntimeError("--compile is only supported with --dtype bfloat16")
 
     quantize.check(args.quant, args.device, args.dtype)
+    if args.backend == "openvino":
+        ov_backend.check(args.device, args.quant, args.compile)
     if quantize.is_static(args.quant):
         if not args.compile:
             raise RuntimeError(
@@ -1269,7 +1284,9 @@ def main():
             parent_cores = sorted(free)
 
     dtype = torch.float32 if args.dtype == "float32" else torch.bfloat16
-    is_dino = "dinov2" in args.model.lower()
+    # "is_dino" is historical: it means "no classifier to score top-1 on",
+    # which is true of DINOv2 and of the YOLO detectors.
+    is_dino = not vision_models.has_classifier(args.model)
 
     buckets = sorted({int(b) for b in args.batch_buckets.split(",") if b.strip()})
     buckets = [b for b in buckets if 0 < b <= args.max_batch_size]
@@ -1302,6 +1319,8 @@ def main():
     log(f"GPU        : {hostinfo.gpu_sku()}")
     log(f"Dtype      : {args.dtype}")
     log(f"Quant      : {quantize.describe(args.quant)}")
+    log(f"Backend    : " + (ov_backend.describe(args.dtype) if args.backend == "openvino"
+                           else f"pytorch {torch.__version__.split('+')[0]}"))
     log(f"Workload   : {args.workload}")
     if is_video:
         log(f"Stream fps : {args.fps:g}")
@@ -1377,13 +1396,8 @@ def main():
         server = NullServer()
     elif args.replicas > 1:
         # The parent keeps only the processor; each replica loads its own model.
-        processor = hub.load_cached(
-            AutoImageProcessor.from_pretrained,
-            args.model,
-            cache_dir=str(MODELS_DIR),
-            use_fast=(args.image_processor == "fast"),
-            log=log,
-        )
+        processor = vision_models.load_processor(
+            args.model, MODELS_DIR, use_fast=(args.image_processor == "fast"), log=log)
 
         def cfg_for(i):
             return {
@@ -1393,6 +1407,7 @@ def main():
                 "dtype": args.dtype,
                 "quant": args.quant,
                 "compile": args.compile,
+                "backend": args.backend,
                 "threads": rep_threads,
                 "cores": rep_slices[i],
                 "is_dino": is_dino,
@@ -1400,6 +1415,9 @@ def main():
                 "pad_to_bucket": args.compile,
             }
 
+        if args.backend == "openvino":
+            # Once, here, before any replica exists to race for the file.
+            ov_backend.ensure_ir(args.model, MODELS_DIR, log=log)
         replica_pool = sweep.ReplicaPool(args.replicas, _vit_replica, cfg_for,
                                          None, log=log)
         for i, st in enumerate(replica_pool.settings):
@@ -1416,24 +1434,18 @@ def main():
         )
         server.warm(payloads[0], buckets, 3 if args.compile else 1, log)
     else:
-        processor = hub.load_cached(
-            AutoImageProcessor.from_pretrained,
-            args.model,
-            cache_dir=str(MODELS_DIR),
-            use_fast=(args.image_processor == "fast"),
-            log=log,
-        )
-        if quantize.is_static(args.quant):
+        processor = vision_models.load_processor(
+            args.model, MODELS_DIR, use_fast=(args.image_processor == "fast"), log=log)
+        if args.backend == "openvino":
+            ov_backend.ensure_ir(args.model, MODELS_DIR, log=log)
+            model = ov_backend.load(args.model, MODELS_DIR, torch.get_num_threads(),
+                                    args.dtype)
+        elif quantize.is_static(args.quant):
             # Calibrated ahead of time and saved; it arrives already compiled.
             model = quantize.load_static(args.model, MODELS_DIR, dtype)
-        elif is_dino:
-            model = hub.load_cached(AutoModel.from_pretrained, args.model,
-                                    cache_dir=str(MODELS_DIR), log=log)
         else:
-            model = hub.load_cached(
-                AutoModelForImageClassification.from_pretrained,
-                args.model, cache_dir=str(MODELS_DIR), log=log)
-        if not quantize.is_static(args.quant):
+            model = vision_models.load_model(args.model, MODELS_DIR, log=log)
+        if not quantize.is_static(args.quant) and args.backend != "openvino":
             model = model.to(device=args.device, dtype=dtype).eval()
             # Before compile on purpose: torchao swaps weights for tensor
             # subclasses, and tracing the bf16 layers first would only be

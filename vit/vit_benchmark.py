@@ -73,7 +73,7 @@ import torch
 import torch.multiprocessing
 from transformers import AutoImageProcessor, AutoModel, AutoModelForImageClassification
 
-from common import hostinfo, hub, quantize, resources, util
+from common import hostinfo, hub, ov_backend, quantize, resources, util, vision_models
 from common.sweep import (
     ReplicaPool,
     as_list,
@@ -129,6 +129,16 @@ def parse_args():
         "--compile",
         action="store_true",
         help="torch.compile() the model. Only supported with --dtype bfloat16.",
+    )
+    p.add_argument(
+        "--backend",
+        choices=ov_backend.BACKENDS,
+        default="pytorch",
+        help="What runs the forward pass. 'openvino' converts the model once "
+        "(saved under models/openvino/) and runs it on OpenVINO's CPU plugin, "
+        "at --dtype bfloat16 or float32, with --threads per replica. CPU only, "
+        "no --quant, no --compile. Everything else - data, replicas, pinning, "
+        "timing - is identical, so the two backends compare cell for cell.",
     )
     p.add_argument(
         "--threads",
@@ -383,13 +393,16 @@ def _replica_main(conn, cfg, pool):
     from common import hub as _hub
     from common import quantize as _quantize
 
-    if _quantize.is_static(cfg["quant"]):
+    if cfg.get("backend") == "openvino":
+        # Converted by the parent before any replica started.
+        from common import ov_backend as _ov
+        model = _ov.load(cfg["model"], cfg["models_dir"], cfg["threads"], cfg["dtype"])
+    elif _quantize.is_static(cfg["quant"]):
         # Calibrated ahead of time and saved; it arrives already compiled.
         model = _quantize.load_static(cfg["model"], cfg["models_dir"], dtype)
     else:
-        cls = AutoModel if cfg["is_dino"] else AutoModelForImageClassification
-        model = _hub.load_cached(cls.from_pretrained, cfg["model"],
-                                 cache_dir=cfg["models_dir"])
+        from common import vision_models as _vm
+        model = _vm.load_model(cfg["model"], cfg["models_dir"])
         model = model.to(device=device, dtype=dtype).eval()
         model = _quantize.apply(model, cfg["quant"])
         if cfg["compile"]:
@@ -489,8 +502,7 @@ def build_pool(model_name, rows, n_images, log):
     not share a normalisation. Shared memory so spawning N replicas does not
     mean N copies of the pixels.
     """
-    processor = hub.load_cached(AutoImageProcessor.from_pretrained,
-                                model_name, cache_dir=str(MODELS_DIR))
+    processor = vision_models.load_processor(model_name, MODELS_DIR)
     images = [r["image"].convert("RGB") for r in rows[:n_images]]
     pool = processor(images=images, return_tensors="pt")["pixel_values"]
     pool = pool.contiguous().share_memory_()
@@ -568,7 +580,9 @@ def sweep_combination(args, model_name, dtype_name, quant, pool, sampler,
     ones - as this used to - leaves the smaller cells on whatever slices come
     first, which on two sockets means all on one.
     """
-    is_dino = "dinov2" in model_name.lower()
+    # "is_dino" is historical: it means "no classifier to score top-1 on",
+    # which is true of DINOv2 and of the YOLO detectors.
+    is_dino = not vision_models.has_classifier(model_name)
     threads = args.threads if args.threads is not None else torch.get_num_threads()
     on_cpu = args.device == "cpu"
 
@@ -598,6 +612,7 @@ def sweep_combination(args, model_name, dtype_name, quant, pool, sampler,
                 "dtype": dtype_name,
                 "quant": quant,
                 "compile": args.compile,
+                "backend": args.backend,
                 "is_dino": is_dino,
                 "threads": _threads,
                 "cores": _slices[i % len(_slices)],
@@ -683,6 +698,7 @@ def write_combination(args, header, model_name, dtype_name, quant, rows, best,
     lines.append(f"Model      : {model_name}")
     lines.append(f"Dtype      : {dtype_name}")
     lines.append(f"Quant      : {quantize.describe(quant)}")
+    lines.append(f"Backend    : {backend_line(args, dtype_name)}")
     # Static int8 arrives compiled whatever --compile says.
     compiled = args.compile or quantize.is_static(quant)
     lines.append(f"Compile    : {'enabled' if compiled else 'disabled'}")
@@ -770,6 +786,8 @@ def write_combination(args, header, model_name, dtype_name, quant, rows, best,
 
     slug = model_name.replace("/", "_")
     tag = precision_tag(dtype_name, quant)
+    if args.backend != "pytorch":
+        tag += f"-{args.backend}"
     path = OUTPUT_DIR / f"vit_throughput_{slug}_{tag}_{timestamp}.txt"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
@@ -846,6 +864,9 @@ def run_throughput(args, rows_ds, timestamp, header, log):
             for dtype_name, quant in precisions:
                 try:
                     quantize.check(quant, args.device, dtype_name)
+                    if args.backend == "openvino":
+                        ov_backend.check(args.device, quant, args.compile)
+                        ov_backend.ensure_ir(model_name, MODELS_DIR, log=log)
                 except RuntimeError as exc:
                     log("")
                     log(f"--- {model_name} @ {precision_tag(dtype_name, quant)}"
@@ -912,6 +933,13 @@ def run_throughput(args, rows_ds, timestamp, header, log):
     for _, _, _, path in summary:
         print(f"Saved results to {path}")
 
+def backend_line(args, dtype_name):
+    """The Backend header line: which runtime executed the forward pass."""
+    if args.backend == "openvino":
+        return ov_backend.describe(dtype_name)
+    return f"pytorch {torch.__version__.split('+')[0]}"
+
+
 def main():
     args = parse_args()
     if args.run_code and not re.fullmatch(r"[A-Za-z0-9._-]+", args.run_code):
@@ -924,6 +952,8 @@ def main():
 
     if args.compile and args.dtype != "bfloat16" and not args.throughput:
         raise RuntimeError("--compile is only supported with --dtype bfloat16")
+    if args.backend == "openvino" and not args.throughput:
+        ov_backend.check(args.device, args.quant, args.compile)
 
     if not args.throughput:
         quantize.check(args.quant, args.device, args.dtype)
@@ -980,6 +1010,7 @@ def main():
     if not args.throughput:
         log(f"Dtype      : {args.dtype}")
         log(f"Quant      : {quantize.describe(args.quant)}")
+        log(f"Backend    : {backend_line(args, args.dtype)}")
     if args.throughput:
         log(f"Mode       : offline throughput sweep (no SLA, no arrival model)")
         log(f"Samples    : {args.pool_images} preprocessed once and cycled")
@@ -1033,21 +1064,18 @@ def main():
         run_throughput(args, rows, timestamp, list(output_lines), log)
         return
 
-    processor = hub.load_cached(AutoImageProcessor.from_pretrained, args.model,
-                                cache_dir=str(MODELS_DIR), log=log)
+    processor = vision_models.load_processor(args.model, MODELS_DIR, log=log)
 
-    is_dino = "dinov2" in args.model.lower()
+    is_dino = not vision_models.has_classifier(args.model)
 
-    if quantize.is_static(args.quant):
+    if args.backend == "openvino":
+        ov_backend.ensure_ir(args.model, MODELS_DIR, log=log)
+        model = ov_backend.load(args.model, MODELS_DIR, torch.get_num_threads(), args.dtype)
+    elif quantize.is_static(args.quant):
         # Calibrated ahead of time and saved; it arrives already compiled.
         model = quantize.load_static(args.model, MODELS_DIR, dtype)
     else:
-        if is_dino:
-            model = hub.load_cached(AutoModel.from_pretrained, args.model,
-                                    cache_dir=str(MODELS_DIR), log=log)
-        else:
-            model = hub.load_cached(AutoModelForImageClassification.from_pretrained,
-                                    args.model, cache_dir=str(MODELS_DIR), log=log)
+        model = vision_models.load_model(args.model, MODELS_DIR, log=log)
 
         model = model.to(device=args.device, dtype=dtype)
         model.eval()

@@ -17,6 +17,11 @@ MODELS = [
     # Same dataset, processor plumbing and classifier head as the ViTs, so it
     # runs through every harness unchanged.
     "microsoft/resnet-50",
+    # Ultralytics YOLO11 medium (~20M parameters), an object detector: its
+    # .pt weights come from the Ultralytics/YOLO11 Hub repo and it needs the
+    # ultralytics package. Loaded through common/vision_models.py like every
+    # other model; it is timed like the rest but has no accuracy score.
+    "Ultralytics/yolo11m",
 ]
 
 DATASET_NAME = "ILSVRC/imagenet-1k"

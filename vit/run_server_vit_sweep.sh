@@ -45,6 +45,10 @@
 #
 #   QUANT=int8-static RUN_CODE=int8-static-v1 nohup bash vit/run_server_vit_sweep.sh > /dev/null 2>&1 &
 #
+# BACKEND=openvino runs the grid on OpenVINO instead of PyTorch:
+#
+#   BACKEND=openvino RUN_CODE=openvino-v1 nohup bash vit/run_server_vit_sweep.sh > server_vit_sweep_stderr.log 2>&1 &
+#
 # RUN_CODE names the sweep. It is written into every result file ("Run code")
 # and the consolidated CSV (run_code), and into the log's file name. A cell
 # only counts as done if it was finished under the same code, so a new code
@@ -61,6 +65,10 @@ DRY_RUN="${DRY_RUN:-0}"
 FORCE="${FORCE:-0}"
 TIERS="${TIERS:-small medium giant cnn}"
 RUN_CODE="${RUN_CODE:-}"
+# ONLY narrows the sweep to models whose id contains one of these
+# comma-separated words, across whatever tiers are selected, e.g.
+#   ONLY=vit-large,dinov2-giant,swin-base
+ONLY="${ONLY:-}"
 if [[ -n $RUN_CODE && ! $RUN_CODE =~ ^[A-Za-z0-9._-]+$ ]]; then
   echo "RUN_CODE '$RUN_CODE': use letters, digits, '.', '_' and '-' only" >&2
   exit 1
@@ -125,6 +133,23 @@ case "$QUANT" in
     COMPILE=1 ;;
   *) echo "QUANT must be none, int8 or int8-static, got '$QUANT'" >&2; exit 1 ;;
 esac
+
+# BACKEND=openvino runs the same grid with OpenVINO executing the forward
+# pass instead of PyTorch (common/ov_backend.py): bf16, no --quant, no
+# --compile - it compiles the model itself. Everything else in a cell is
+# unchanged, so the two backends compare cell for cell.
+BACKEND="${BACKEND:-pytorch}"
+case "$BACKEND" in
+  pytorch) ;;
+  openvino)
+    if [[ $QUANT != none || $COMPILE == 1 ]]; then
+      echo "BACKEND=openvino takes neither QUANT nor COMPILE=1 (it compiles the model itself)" >&2
+      exit 1
+    fi
+    COMMON+=(--backend openvino) ;;
+  *) echo "BACKEND must be pytorch or openvino, got '$BACKEND'" >&2; exit 1 ;;
+esac
+
 [[ $QUANT != none ]] && COMMON+=(--quant "$QUANT")
 [[ $COMPILE == 1 ]] && COMMON+=(--compile)
 QUANT_LINE="disabled"; [[ $QUANT != none ]] && QUANT_LINE="$QUANT "
@@ -157,6 +182,10 @@ SPECS=(
   # One fixed cell alongside those: the 4 x 16 layout the other models were
   # first measured at, 32 cores per socket with 16 left free on each.
   "cnn|microsoft/resnet-50|16|$SLA_SMALL|4"
+  # YOLO11m, an object detector (640 x 640 input, ~68 GFLOPs). No attention
+  # heads; 8 threads per replica measured best per core on OpenVINO among 4-24
+  # while keeping batch-1 latency at ~20 ms.
+  "cnn|Ultralytics/yolo11m|8|$SLA_SMALL|range"
 )
 
 # The 8-bit sweeps (QUANT=int8 or int8-static) run a narrower grid: the same
@@ -178,6 +207,26 @@ SPECS_INT8=(
 # bfloat16 baseline needs to line up cell for cell with the 8-bit results.
 GRID="${GRID:-}"
 [[ $QUANT != none || $GRID == int8 ]] && SPECS=("${SPECS_INT8[@]}")
+
+# GRID=fill: no replica-count range. For each thread count listed, one cell
+# with as many replicas as fit - the machine filled, minus PARENT_MIN cores
+# kept for the harness, split evenly over the sockets. So the two layouts to
+# compare are one variable apart:
+#
+#   PARENT_MIN=0  no cores reserved: replicas x threads = 96 (12x8, 8x12, ...)
+#   PARENT_MIN=8  8 reserved, 4 per socket: as many as fit in 2 x 44
+#
+# Thread counts that divide 48 fill a socket exactly with nothing reserved;
+# with 4 per socket held back some of them leave cores idle (8 threads: 5 per
+# socket = 40 of 44), which the result's Parent line shows.
+SPECS_FILL=(
+  "medium|google/vit-large-patch16-224|8,12,16|$SLA_MEDIUM|max"
+  "giant|facebook/dinov2-giant|8,12,24|$SLA_GIANT|max"
+  "small|microsoft/swin-base-patch4-window7-224|4,6,8|$SLA_SMALL|max"
+  "cnn|microsoft/resnet-50|4,8,12,16|$SLA_SMALL|max"
+  "cnn|Ultralytics/yolo11m|4,8,12,16|$SLA_SMALL|max"
+)
+[[ $GRID == fill ]] && SPECS=("${SPECS_FILL[@]}")
 MIN_REPLICAS=2
 
 # ---- core layout -------------------------------------------------------------
@@ -269,6 +318,12 @@ done_already() {
     grep -q "^Device     : cpu" "$f" || continue
     grep -q "^Dtype      : bfloat16" "$f" || continue
     grep -q "^Quant      : $QUANT_LINE" "$f" || continue
+    # Results from before the Backend line existed are PyTorch ones.
+    if [[ $BACKEND == openvino ]]; then
+      grep -q "^Backend    : openvino" "$f" || continue
+    else
+      grep -q "^Backend    : openvino" "$f" && continue
+    fi
     grep -q "^Compile    : $COMPILE_LINE" "$f" || continue
     grep -q "^Batch size : $MAX_BATCH (max)" "$f" || continue
     # A named sweep only counts its own results as done.
@@ -313,7 +368,7 @@ cell() {
     "    model     : $model"
     "    replicas  : $replicas x $threads threads"
     "    cores     : mask $CELL_MASK, replicas pinned to $CELL_CORES, harness keeps $CELL_PARENT"
-    "    fixed     : cpu bfloat16, quant $QUANT, compile $COMPILE_LINE, max batch $MAX_BATCH, batch wait 5 ms, 8 pre workers"
+    "    fixed     : cpu bfloat16, backend $BACKEND, quant $QUANT, compile $COMPILE_LINE, max batch $MAX_BATCH, batch wait 5 ms, 8 pre workers"
     "    SLA       : p95 <= $sla ms"
   )
   [[ -n $CELL_NOTE ]] && banner+=("    note      : $CELL_NOTE")
@@ -348,12 +403,23 @@ plan() {
   done
 }
 
+# selected MODEL -> true when ONLY is empty or names part of the model id.
+selected() {
+  local word
+  [[ -z $ONLY ]] && return 0
+  for word in ${ONLY//,/ }; do
+    [[ $1 == *"$word"* ]] && return 0
+  done
+  return 1
+}
+
 # Cells in the selected tiers, so every start line can say where it is.
 CELL_NO=0
 CELL_TOTAL=0
 for spec in "${SPECS[@]}"; do
   IFS='|' read -r tier model threads sla mode <<< "$spec"
   [[ " $TIERS " == *" $tier "* ]] || continue
+  selected "$model" || continue
   CELL_TOTAL=$(( CELL_TOTAL + $(plan "$tier" "$model" "$threads" "$sla" "$mode" | wc -l) ))
 done
 
@@ -361,6 +427,10 @@ for spec in "${SPECS[@]}"; do
   IFS='|' read -r tier model threads sla mode <<< "$spec"
   if [[ " $TIERS " != *" $tier "* ]]; then
     log "--- skip ($tier tier not selected): $model"
+    continue
+  fi
+  if ! selected "$model"; then
+    log "--- skip (not in ONLY): $model"
     continue
   fi
   for c in $(plan "$tier" "$model" "$threads" "$sla" "$mode"); do

@@ -33,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import torch  # noqa: E402
 
-from common import hub, quantize  # noqa: E402
+from common import hub, quantize, vision_models  # noqa: E402
 from common.paths import DATASET_DIR, MODELS_DIR, ensure_dirs  # noqa: E402
 from vit.vit_common import DATASET_NAME, MODELS, load_validation  # noqa: E402
 
@@ -70,26 +70,23 @@ def parse_args():
 
 
 def calibration_batches(model_name, rows, batch_size):
-    from transformers import AutoImageProcessor
-
-    processor = hub.load_cached(AutoImageProcessor.from_pretrained, model_name,
-                                cache_dir=str(MODELS_DIR))
+    processor = vision_models.load_processor(model_name, MODELS_DIR)
     for i in range(0, len(rows), batch_size):
         images = [r["image"].convert("RGB") for r in rows[i:i + batch_size]]
         yield processor(images=images, return_tensors="pt")["pixel_values"]
 
 
 def build(model_name, rows, args):
-    from transformers import AutoModel, AutoModelForImageClassification
-
+    if vision_models.kind(model_name) == "detector":
+        print(f"{model_name}: skipped - static int8 is only set up for the "
+              f"transformers models; use --backend openvino for YOLO")
+        return
     out = quantize.static_dir(model_name, MODELS_DIR) / "model.pt2"
     if out.is_file() and not args.force:
         print(f"{model_name}: already built at {out} (--force to rebuild)")
         return
     print(f"{model_name}: building")
-    cls = AutoModel if "dinov2" in model_name.lower() else AutoModelForImageClassification
-    model = hub.load_cached(cls.from_pretrained, model_name,
-                            cache_dir=str(MODELS_DIR), log=print)
+    model = vision_models.load_model(model_name, MODELS_DIR, log=print)
     model = model.to(device="cpu", dtype=torch.float32).eval()
     quantize.build_static(
         model,

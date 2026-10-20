@@ -676,6 +676,11 @@ def parse_file(path):
         rec.setdefault("backend", "vllm-omni")
     elif rec["script"].startswith(("server_dit", "dit")):
         rec.setdefault("backend", "diffusers")
+    elif rec["script"].startswith(("server_vit", "vit")):
+        # The ViT scripts print "Backend : openvino 2026.4.1 (...)" or
+        # "pytorch 2.13.0"; the column keeps the runtime's name, so a filter on
+        # it is one word. Runs from before the option existed were PyTorch.
+        rec["backend"] = (rec.get("backend") or "pytorch").split()[0]
 
     # Runs predating hostinfo.py have no GPU line, but server_vit's monitor
     # line names the device it sampled - recover the SKU from it.
