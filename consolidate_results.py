@@ -162,6 +162,7 @@ ARG_FIELDS = [
     "affinity_per_socket",
     "replica_cores",
     "replica_spare_cores",
+    "ov_streams_raw",
     "parent_cores",
     # Offline throughput sweeps (vit_throughput, dit_throughput).
     "precisions_swept",
@@ -435,6 +436,7 @@ KEY_MAP = {
     "Aff/socket": "affinity_per_socket",
     "Rep cores": "replica_cores",
     "Rep spare": "replica_spare_cores",
+    "OV streams": "ov_streams_raw",
     "Parent": "parent_cores",
     "Drop after": "drop_after_factor",
     "Requests": "requests_raw",

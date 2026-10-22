@@ -1,8 +1,1 @@
-=== 2026-10-20 15:24:38 start [8/11]: Ultralytics/yolo11m 9x8 sla100
-    run code  : ov-yolo-8t
-    model     : Ultralytics/yolo11m
-    replicas  : 9 x 8 threads
-    cores     : mask 0-47,48-95, replicas pinned to 0-39,48-79, harness keeps 24
-    fixed     : cpu bfloat16, backend openvino, quant none, compile disabled, max batch 16, batch wait 5 ms, 8 pre workers
-    SLA       : p95 <= 100 ms
-    note      : 5 replicas on socket 0, 4 on socket 1
+=== 2026-10-21 16:58:14 sweep finished (3 cells)

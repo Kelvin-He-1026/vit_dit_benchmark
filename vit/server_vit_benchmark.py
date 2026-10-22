@@ -238,6 +238,18 @@ def parse_args():
         "and pinning are unchanged, so the two backends compare cell for cell.",
     )
     p.add_argument(
+        "--ov-streams",
+        type=int,
+        default=1,
+        help="OpenVINO only: inference streams per replica process (default 1). "
+        "With S > 1 each of the --replicas processes compiles ONE copy of the "
+        "model with S streams and serves S batches at once, each stream on "
+        "--threads cores; the harness sees replicas x S independent lanes. "
+        "Same lanes and cores as replicas x S single-stream replicas, but one "
+        "copy of the weights and runtime per process instead of per lane. "
+        "Each process needs S x --threads cores in its --cpu-cores slice.",
+    )
+    p.add_argument(
         "--compile",
         action="store_true",
         help="torch.compile() the model. Only supported with --dtype bfloat16. "
@@ -747,6 +759,125 @@ def _vit_replica(conn, cfg, _payload):
                 conn.send({"error": f"{type(exc).__name__}: {str(exc)[:300]}"})
 
 
+def _vit_stream_host(conns, cfg):
+    """One process hosting one OpenVINO model with len(conns) streams.
+
+    Each stream gets its own pipe, thread and infer request, and speaks the
+    same protocol as _vit_replica on that pipe, so to the parent every stream
+    is just another replica. Only the model - weights, runtime, compiled
+    kernels - is shared.
+    """
+    import os as _os
+    import threading
+
+    if cfg.get("cores"):
+        try:
+            _os.sched_setaffinity(0, set(cfg["cores"]))
+        except (AttributeError, OSError) as exc:
+            for c in conns:
+                c.send({"warning": f"affinity not set: {exc}"})
+
+    import torch as _torch
+
+    # PyTorch only converts tensors here; OpenVINO does the work. Its own
+    # thread pool would otherwise spin on the cores OpenVINO's streams use
+    # (measured at ~3 ms a batch on YOLO11m, 8 cores).
+    _torch.set_num_threads(1)
+
+    from common import ov_backend as _ov
+
+    try:
+        model = _ov.load(cfg["model"], cfg["models_dir"], cfg["threads"],
+                         cfg["dtype"], streams=len(conns))
+    except Exception as exc:  # noqa: BLE001 - the parent turns this into a message
+        for c in conns:
+            c.send({"error": f"{type(exc).__name__}: {str(exc)[:300]}"})
+        return
+    cores = len(_os.sched_getaffinity(0)) if hasattr(_os, "sched_getaffinity") else None
+
+    def serve(conn, call):
+        def run(batch, n):
+            with _torch.inference_mode():
+                out = call(batch)
+            if cfg["is_dino"]:
+                _ = out[:, 0]
+                return [-1] * n
+            return out[:n].argmax(dim=-1).tolist()
+
+        conn.send({"started": True, "device": "cpu", "threads": cfg["threads"],
+                   "cores": cores, "streams": model.streams})
+        while True:
+            try:
+                msg = conn.recv()
+            except EOFError:
+                break
+            if msg.get("stop"):
+                break
+            if "warm" in msg:
+                for b in msg["buckets"]:
+                    for _ in range(msg["reps"]):
+                        run(msg["warm"].expand(b, *msg["warm"].shape[1:]).contiguous(), b)
+                conn.send({"warmed": True})
+            elif "batch" in msg:
+                try:
+                    conn.send({"preds": run(msg["batch"], msg["n"])})
+                except Exception as exc:  # noqa: BLE001 - one bad batch is not fatal
+                    conn.send({"error": f"{type(exc).__name__}: {str(exc)[:300]}"})
+
+    workers = [threading.Thread(target=serve, args=(c, model.caller()), name=f"stream{k}")
+               for k, c in enumerate(conns)]
+    for w in workers:
+        w.start()
+    for w in workers:
+        w.join()
+
+
+class StreamPool:
+    """sweep.ReplicaPool's interface over processes that each host S streams.
+
+    `conns` has one pipe per stream, n_procs x streams in all, which is all
+    ReplicaServer uses - so routing, batching and scoring are untouched and
+    a stream is treated exactly like a replica.
+    """
+
+    def __init__(self, n_procs, streams, cfg_for, log=print):
+        ctx = torch.multiprocessing.get_context("spawn")
+        self.conns, self.procs, self.settings = [], [], []
+        for p in range(n_procs):
+            pairs = [ctx.Pipe() for _ in range(streams)]
+            proc = ctx.Process(target=_vit_stream_host,
+                               args=([child for _, child in pairs], cfg_for(p)),
+                               daemon=True, name=f"streamhost{p}")
+            proc.start()
+            self.procs.append(proc)
+            self.conns.extend(parent for parent, _ in pairs)
+        for i, conn in enumerate(self.conns):
+            try:
+                msg = conn.recv()
+                while "warning" in msg:
+                    log(f"  stream host: {msg['warning']}")
+                    msg = conn.recv()
+            except EOFError:
+                self.close()
+                raise RuntimeError(f"stream {i} exited during startup; see the "
+                                   f"traceback above") from None
+            if "error" in msg:
+                self.close()
+                raise RuntimeError(f"stream {i} failed to start: {msg['error']}")
+            self.settings.append(msg)
+
+    def close(self):
+        for conn in self.conns:
+            try:
+                conn.send({"stop": True})
+            except (BrokenPipeError, OSError):
+                pass
+        for proc in self.procs:
+            proc.join(timeout=30)
+            if proc.is_alive():
+                proc.terminate()
+
+
 class ReplicaServer(InferenceServer):
     """InferenceServer with N inference replicas behind its one queue.
 
@@ -1044,7 +1175,9 @@ def score_level(records, depth_samples, t0, args, is_dino, sampler=None):
                 cur[1] = max(cur[1], e0)
         if cur is not None:
             busy += cur[1] - cur[0]
-    infer_capacity = (args.replicas * len(window) / busy if busy > 0
+    # Lanes, not processes: with --ov-streams each stream is a lane of its own,
+    # timed separately (r.replica is the lane index).
+    infer_capacity = (args.replicas * args.ov_streams * len(window) / busy if busy > 0
                       else float("inf"))
     pre = [r.preprocess_s for r in window if r.preprocess_s > 0]
     pre_capacity = (args.preprocess_workers / statistics.fmean(pre)
@@ -1231,6 +1364,13 @@ def main():
     quantize.check(args.quant, args.device, args.dtype)
     if args.backend == "openvino":
         ov_backend.check(args.device, args.quant, args.compile)
+    if args.ov_streams < 1:
+        raise RuntimeError("--ov-streams must be >= 1")
+    if args.ov_streams > 1 and args.backend != "openvino":
+        raise RuntimeError("--ov-streams is an OpenVINO option; add --backend openvino")
+    # Streams always run in replica processes, even with --replicas 1: the
+    # parent keeps doing only preprocessing and scheduling.
+    pooled = args.replicas > 1 or args.ov_streams > 1
     if quantize.is_static(args.quant):
         if not args.compile:
             raise RuntimeError(
@@ -1245,7 +1385,7 @@ def main():
               "them into the surrounding kernels.")
     if args.replicas < 1:
         raise RuntimeError("--replicas must be >= 1")
-    if args.replicas == 1 and (args.cpu_cores or args.devices):
+    if not pooled and (args.cpu_cores or args.devices):
         raise RuntimeError("--cpu-cores / --devices place replicas; use them "
                            "with --replicas > 1")
     if args.replicas > 1 and args.selftest:
@@ -1265,6 +1405,10 @@ def main():
         sweep.parse_cores(args.cpu_cores) if args.cpu_cores else [], args.replicas)
     rep_threads = args.threads or min(
         CPU_DEFAULT_THREADS, len(rep_slices[0]) if rep_slices[0] else CPU_DEFAULT_THREADS)
+    if args.ov_streams > 1 and not args.threads:
+        # Per stream: the replica's slice shared out between its streams.
+        rep_threads = max(1, (len(rep_slices[0]) if rep_slices[0] else
+                              CPU_DEFAULT_THREADS * args.ov_streams) // args.ov_streams)
     # Keep this process OFF the replicas' cores. It runs the preprocessing
     # pool and the schedulers, and if it floats onto a core a replica owns it
     # preempts one of that replica's intra-op threads, which stalls the whole
@@ -1276,7 +1420,7 @@ def main():
     affinity = (sorted(os.sched_getaffinity(0))
                 if hasattr(os, "sched_getaffinity") else [])
     parent_cores = None
-    if args.replicas > 1 and args.cpu_cores and hasattr(os, "sched_getaffinity"):
+    if pooled and args.cpu_cores and hasattr(os, "sched_getaffinity"):
         used = {c for sl in rep_slices if sl for c in sl}
         free = set(os.sched_getaffinity(0)) - used
         if free:
@@ -1349,17 +1493,23 @@ def main():
         # One in-process replica is not pinned beyond the mask, and shares it
         # with preprocessing; unpinned replicas likewise float over all of it.
         rep_cores = len(rep_slices[0]) if rep_slices[0] else len(affinity)
-        threads_now = torch.get_num_threads() if args.replicas == 1 else rep_threads
+        threads_now = (torch.get_num_threads() if not pooled
+                       else rep_threads * args.ov_streams)
         log(f"Rep cores  : {rep_cores}")
         log(f"Rep spare  : {rep_cores - threads_now}")
-    if args.replicas == 1:
+    if not pooled:
         log(f"Threads    : {torch.get_num_threads()}")
     else:
         log(f"Replicas   : {args.replicas}")
         log(f"Devices    : {','.join(rep_devices)}")
         log(f"CPU bind   : {sweep.joined(args.cpu_cores) or 'unpinned'}, "
             f"split between replicas")
-        log(f"Threads    : {rep_threads} per replica")
+        if args.ov_streams > 1:
+            log(f"OV streams : {args.ov_streams} per replica, "
+                f"{args.replicas * args.ov_streams} lanes in all")
+            log(f"Threads    : {rep_threads} per stream")
+        else:
+            log(f"Threads    : {rep_threads} per replica")
         if parent_cores:
             log(f"Parent     : {len(parent_cores)} cores the replicas leave free "
                 f"(preprocessing + scheduling)")
@@ -1387,14 +1537,14 @@ def main():
     replica_pool = None
     # The replicas are other processes, which this process's own CPU counter
     # does not see; the machine-wide one does.
-    cpu_key = "sys_cores_busy_mean" if args.replicas > 1 else "cpu_cores_busy_mean"
+    cpu_key = "sys_cores_busy_mean" if pooled else "cpu_cores_busy_mean"
     if args.selftest:
         # Deliberately no model and no processor: the point of the self-test is
         # to time the generator and the event loop, so loading weights would
         # only slow down startup and muddy what is being measured.
         log("Model load : skipped (--selftest)")
         server = NullServer()
-    elif args.replicas > 1:
+    elif pooled:
         # The parent keeps only the processor; each replica loads its own model.
         processor = vision_models.load_processor(
             args.model, MODELS_DIR, use_fast=(args.image_processor == "fast"), log=log)
@@ -1418,10 +1568,14 @@ def main():
         if args.backend == "openvino":
             # Once, here, before any replica exists to race for the file.
             ov_backend.ensure_ir(args.model, MODELS_DIR, log=log)
-        replica_pool = sweep.ReplicaPool(args.replicas, _vit_replica, cfg_for,
-                                         None, log=log)
+        if args.ov_streams > 1:
+            replica_pool = StreamPool(args.replicas, args.ov_streams, cfg_for, log=log)
+        else:
+            replica_pool = sweep.ReplicaPool(args.replicas, _vit_replica, cfg_for,
+                                             None, log=log)
         for i, st in enumerate(replica_pool.settings):
-            log(f"  replica {i}: {st['device']}, {st['threads']} intra-op threads, "
+            log(f"  {'stream' if args.ov_streams > 1 else 'replica'} {i}: "
+                f"{st['device']}, {st['threads']} intra-op threads, "
                 f"{st['cores']} cores visible")
         server = ReplicaServer(
             pool=replica_pool,

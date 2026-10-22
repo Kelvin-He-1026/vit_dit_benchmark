@@ -1,0 +1,75 @@
+Timestamp  : 20261021_163051
+Run code   : pytorch-v2
+Script     : server_vit_benchmark
+Model      : google/vit-large-patch16-224
+Dataset    : ILSVRC/imagenet-1k
+Device     : cpu
+Server     : ThinkSystem SR630 V4
+CPU        : Intel(R) Xeon(R) 6740P
+CPU cores  : 96 logical, 96 physical, 2 sockets
+GPU        : NVIDIA L4 x2
+Dtype      : bfloat16
+Quant      : disabled
+Backend    : pytorch 2.13.0
+Workload   : interactive
+Think time : 5 s
+SLA        : p95 end-to-end <= 100 ms
+Batch size : 16 (max)
+Batch wait : 5 ms
+Pre workers: 8
+Samples    : 256
+Warmup     : 5 s per level
+Measure    : 120 s per level
+Seed       : 42
+Compile    : disabled
+Processor  : slow
+Affinity   : 0-95
+Aff cores  : 96
+Aff/socket : 48,48
+Rep cores  : 12
+Rep spare  : 0
+Replicas   : 7
+Devices    : cpu
+CPU bind   : 0-47,48-83, split between replicas
+Threads    : 12 per replica
+Parent     : 12 cores the replicas leave free (preprocessing + scheduling)
+Self-test  : disabled
+Payloads   : 256 JPEGs, 67.4 KiB avg
+  replica 0: cpu, 12 intra-op threads, 12 cores visible
+  replica 1: cpu, 12 intra-op threads, 12 cores visible
+  replica 2: cpu, 12 intra-op threads, 12 cores visible
+  replica 3: cpu, 12 intra-op threads, 12 cores visible
+  replica 4: cpu, 12 intra-op threads, 12 cores visible
+  replica 5: cpu, 12 intra-op threads, 12 cores visible
+  replica 6: cpu, 12 intra-op threads, 12 cores visible
+Warmed buckets: 1,2,4,8,16 x1 on 7 replicas
+Resource monitor: RAPL counters unreadable, CPU power disabled
+Monitor    : host=psutil device=off every 250 ms
+
+=== SWEEP (req/s) ===
+[    8.00 req/s] n=   903  p50=   64.0  p95=   129.1  p99=   149.7 ms  batch=  1.0  cpu=  6.0c  gpu=  nan%  FAIL  p95 129.1 ms > 100 ms
+           routed: r0=135 (14%)  r1=138 (15%)  r2=136 (14%)  r3=135 (14%)  r4=136 (14%)  r5=136 (14%)  r6=135 (14%)
+[    4.00 req/s] n=   456  p50=   63.1  p95=   129.9  p99=   141.7 ms  batch=  1.0  cpu=  3.0c  gpu=  nan%  FAIL  p95 129.9 ms > 100 ms
+           routed: r0=69 (14%)  r1=69 (14%)  r2=69 (14%)  r3=69 (14%)  r4=70 (14%)  r5=68 (14%)  r6=69 (14%)
+[    2.00 req/s] n=   226  p50=   62.3  p95=   126.1  p99=   133.6 ms  batch=  1.0  cpu=  1.4c  gpu=  nan%  FAIL  p95 126.1 ms > 100 ms
+           routed: r0=34 (14%)  r1=34 (14%)  r2=35 (15%)  r3=34 (14%)  r4=34 (14%)  r5=35 (15%)  r6=35 (15%)
+[    1.00 req/s] n=   121  p50=   61.8  p95=   126.4  p99=   131.6 ms  batch=  1.0  cpu=  0.8c  gpu=  nan%  FAIL  p95 126.4 ms > 100 ms
+           routed: r0=18 (14%)  r1=18 (14%)  r2=18 (14%)  r3=18 (14%)  r4=19 (15%)  r5=18 (14%)  r6=18 (14%)
+[    0.50 req/s] n=    67  p50=   62.2  p95=   128.2  p99=   144.8 ms  batch=  1.0  cpu=  0.5c  gpu=  nan%  FAIL  p95 128.2 ms > 100 ms
+           routed: r0=10 (14%)  r1=11 (15%)  r2=10 (14%)  r3=10 (14%)  r4=10 (14%)  r5=10 (14%)  r6=10 (14%)
+
+=== RESULT ===
+sla_ms                  : 100
+sla_seconds             : 0.1000
+sla_percentile          : 95
+workload                : interactive
+max_concurrent_users    : 0
+max_qps                 : 0
+verdict                 : SLA unmet at every level tried; this cell cannot serve a single user inside the budget
+
+=== LADDER ===
+        8.00 req/s   p95=   129.08 ms  n=   903  FAIL  p95 129.1 ms > 100 ms
+        4.00 req/s   p95=   129.87 ms  n=   456  FAIL  p95 129.9 ms > 100 ms
+        2.00 req/s   p95=   126.07 ms  n=   226  FAIL  p95 126.1 ms > 100 ms
+        1.00 req/s   p95=   126.39 ms  n=   121  FAIL  p95 126.4 ms > 100 ms
+        0.50 req/s   p95=   128.16 ms  n=    67  FAIL  p95 128.2 ms > 100 ms

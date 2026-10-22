@@ -69,6 +69,16 @@ RUN_CODE="${RUN_CODE:-}"
 # comma-separated words, across whatever tiers are selected, e.g.
 #   ONLY=vit-large,dinov2-giant,swin-base
 ONLY="${ONLY:-}"
+# REPLICAS replaces each selected model's replica counts with this list, at
+# the model's usual thread count, e.g. ViT-L at 4, 5 and 6 x 16 threads:
+#   ONLY=vit-large REPLICAS=4,5,6
+# A count that fills the machine (6 x 16 = 96) runs with the harness sharing
+# the replicas' cores, and is marked so in the log.
+REPLICAS="${REPLICAS:-}"
+if [[ -n $REPLICAS && ! $REPLICAS =~ ^[0-9]+(,[0-9]+)*$ ]]; then
+  echo "REPLICAS '$REPLICAS': give comma-separated counts, e.g. 4,5,6" >&2
+  exit 1
+fi
 if [[ -n $RUN_CODE && ! $RUN_CODE =~ ^[A-Za-z0-9._-]+$ ]]; then
   echo "RUN_CODE '$RUN_CODE': use letters, digits, '.', '_' and '-' only" >&2
   exit 1
@@ -418,6 +428,7 @@ CELL_NO=0
 CELL_TOTAL=0
 for spec in "${SPECS[@]}"; do
   IFS='|' read -r tier model threads sla mode <<< "$spec"
+  [[ -n $REPLICAS ]] && mode=$REPLICAS
   [[ " $TIERS " == *" $tier "* ]] || continue
   selected "$model" || continue
   CELL_TOTAL=$(( CELL_TOTAL + $(plan "$tier" "$model" "$threads" "$sla" "$mode" | wc -l) ))
@@ -425,6 +436,7 @@ done
 
 for spec in "${SPECS[@]}"; do
   IFS='|' read -r tier model threads sla mode <<< "$spec"
+  [[ -n $REPLICAS ]] && mode=$REPLICAS
   if [[ " $TIERS " != *" $tier "* ]]; then
     log "--- skip ($tier tier not selected): $model"
     continue

@@ -186,19 +186,42 @@ class OpenVINOModel:
     OpenVINO converts to its inference precision internally.
     """
 
-    def __init__(self, path, threads, dtype_name):
+    def __init__(self, path, threads, dtype_name, streams=1):
         import openvino as ov
 
+        # `threads` is per stream. With one stream this is the replica set-up
+        # every benchmark uses; with several, one compiled model - one copy of
+        # the weights - runs `streams` inferences at once, each on its own
+        # `threads` cores of this process's affinity mask.
         config = {
-            "INFERENCE_NUM_THREADS": int(threads),
-            "NUM_STREAMS": 1,
-            "PERFORMANCE_HINT": "LATENCY",
+            "INFERENCE_NUM_THREADS": int(threads) * int(streams),
+            "NUM_STREAMS": int(streams),
             "ENABLE_CPU_PINNING": True,
             "INFERENCE_PRECISION_HINT": "bf16" if dtype_name == "bfloat16" else "f32",
         }
+        if streams == 1:
+            config["PERFORMANCE_HINT"] = "LATENCY"
         self.compiled = ov.Core().compile_model(str(path), "CPU", config)
         self.request = self.compiled.create_infer_request()
         self.threads = self.compiled.get_property("INFERENCE_NUM_THREADS")
+        self.streams = self.compiled.get_property("NUM_STREAMS")
+
+    def caller(self):
+        """A callable with its own infer request, for one stream's thread.
+
+        Requests on the same compiled model run concurrently - that is what
+        the streams are for - and infer() releases the GIL, so one thread per
+        stream is enough to keep them all busy.
+        """
+        import torch
+
+        request = self.compiled.create_infer_request()
+
+        def call(pixel_values):
+            x = pixel_values.detach().to(torch.float32).contiguous().numpy()
+            return torch.from_numpy(request.infer({0: x})[0].copy())
+
+        return call
 
     def __call__(self, pixel_values=None, **_unused):
         import torch
@@ -212,11 +235,11 @@ class OpenVINOModel:
         return self
 
 
-def load(model_name, models_dir, threads, dtype_name):
+def load(model_name, models_dir, threads, dtype_name, streams=1):
     """The compiled model for `model_name`. ensure_ir() must have run first."""
     path = ir_dir(model_name, models_dir) / "model.xml"
     if not path.is_file():
         raise RuntimeError(
             f"no OpenVINO model for {model_name} at {path}; the parent "
             f"process converts it before starting replicas")
-    return OpenVINOModel(path, threads, dtype_name)
+    return OpenVINOModel(path, threads, dtype_name, streams=streams)
