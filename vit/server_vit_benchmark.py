@@ -716,7 +716,12 @@ def _vit_replica(conn, cfg, _payload):
             if padded_to > n:
                 pad = batch[-1:].expand(padded_to - n, *batch.shape[1:])
                 batch = _torch.cat([batch, pad], dim=0)
-        batch = batch.to(device=device, dtype=dtype, non_blocking=True)
+        # Original shared conversion (restore to reproduce older runs):
+        # batch = batch.to(device=device, dtype=dtype, non_blocking=True)
+        # OpenVINO takes FP32 input; cfg["dtype"] still controls its internal
+        # inference precision in _ov.load(). Avoid FP32 -> BF16 -> FP32.
+        input_dtype = _torch.float32 if cfg.get("backend") == "openvino" else dtype
+        batch = batch.to(device=device, dtype=input_dtype, non_blocking=True)
         with _torch.inference_mode():
             out = model(pixel_values=batch)
             if cfg["is_dino"]:
@@ -1615,7 +1620,10 @@ def main():
             model=model,
             processor=processor,
             device=args.device,
-            dtype=dtype,
+            # Original input dtype (restore to reproduce older runs):
+            # dtype=dtype,
+            # OpenVINO's input is FP32; args.dtype still selects its compute precision.
+            dtype=torch.float32 if args.backend == "openvino" else dtype,
             is_dino=is_dino,
             max_batch=args.max_batch_size,
             batch_timeout_s=args.batch_timeout_ms / 1000.0,
