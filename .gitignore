@@ -17,6 +17,7 @@ CACHEDIR.TAG
 # ---- Virtual environments ----
 cv_env/
 vllm_env/
+ui_env/
 .venv/
 venv/
 env/
@@ -73,3 +74,6 @@ Thumbs.db
 .env.*
 *.pem
 *.key
+
+# Model repository start_ovms.sh builds (hard links into models/)
+deploy/ovms/models/

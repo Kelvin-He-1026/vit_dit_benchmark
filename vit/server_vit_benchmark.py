@@ -229,13 +229,31 @@ def parse_args():
     )
     p.add_argument(
         "--backend",
-        choices=ov_backend.BACKENDS,
+        choices=ov_backend.BACKENDS + ("http",),
         default="pytorch",
         help="What runs the forward pass. 'openvino' converts the model once "
         "(saved under models/openvino/) and runs it on OpenVINO's CPU plugin, "
         "at --dtype bfloat16 or float32, with --threads per replica. CPU only, "
         "no --quant, no --compile. Queue, batching, preprocessing, replicas "
         "and pinning are unchanged, so the two backends compare cell for cell.",
+    )
+    p.add_argument(
+        "--http-endpoints",
+        default=None,
+        help="--backend http: comma-separated base URLs of KServe v2 REST "
+        "servers already running the model, e.g. the OpenVINO Model Server "
+        "containers from deploy/ovms/start_ovms.sh. Each endpoint is one "
+        "replica: the harness keeps one request in flight per endpoint, so "
+        "--replicas is taken from this list. Preprocessing, the queue, "
+        "batching and scoring stay in this process; only the forward pass "
+        "moves to the servers.",
+    )
+    p.add_argument(
+        "--http-model",
+        default=None,
+        help="--backend http: the model name the servers use. Defaults to "
+        "the one start_ovms.sh gives --model (lower case, '/' and '_' as "
+        "'-').",
     )
     p.add_argument(
         "--ov-streams",
@@ -837,6 +855,58 @@ def _vit_stream_host(conns, cfg):
         w.join()
 
 
+class _HttpLane:
+    """One remote replica behind the pipe interface ReplicaServer uses.
+
+    ReplicaServer talks to a replica with conn.send(msg) then conn.recv(),
+    from that replica's own executor thread; here send() just remembers the
+    message and recv() makes the HTTP call, so a lane holds exactly one
+    request in flight, as a replica process does.
+    """
+
+    def __init__(self, endpoint, model, is_dino):
+        from common.ovms_client import OVMSClient
+        self.client = OVMSClient(endpoint, model)
+        self.endpoint = endpoint
+        self.is_dino = is_dino
+        self._msg = None
+
+    def send(self, msg):
+        self._msg = msg
+
+    def _run(self, batch, n):
+        out = self.client.infer(batch.to(torch.float32).numpy())
+        if self.is_dino:
+            return [-1] * n
+        return out[:n].argmax(-1).tolist()
+
+    def recv(self):
+        msg, self._msg = self._msg, None
+        if msg is None or msg.get("stop"):
+            return {"stopped": True}
+        try:
+            if "warm" in msg:
+                for b in msg["buckets"]:
+                    for _ in range(msg["reps"]):
+                        self._run(msg["warm"].expand(b, *msg["warm"].shape[1:]).contiguous(), b)
+                return {"warmed": True}
+            return {"preds": self._run(msg["batch"], msg["n"])}
+        except Exception as exc:  # noqa: BLE001 - reported per batch, like a replica
+            return {"error": f"{type(exc).__name__}: {str(exc)[:300]}"}
+
+
+class HttpPool:
+    """sweep.ReplicaPool's interface over remote model servers, one per lane."""
+
+    def __init__(self, endpoints, model, is_dino):
+        self.conns = [_HttpLane(e, model, is_dino) for e in endpoints]
+        self.settings = [{"device": "http", "threads": "server-side", "cores": e}
+                         for e in endpoints]
+
+    def close(self):
+        pass
+
+
 class StreamPool:
     """sweep.ReplicaPool's interface over processes that each host S streams.
 
@@ -1369,13 +1439,26 @@ def main():
     quantize.check(args.quant, args.device, args.dtype)
     if args.backend == "openvino":
         ov_backend.check(args.device, args.quant, args.compile)
+    if args.backend == "http":
+        if not args.http_endpoints:
+            raise RuntimeError("--backend http needs --http-endpoints")
+        if args.quant != "none" or args.compile or args.ov_streams > 1:
+            raise RuntimeError("--backend http: precision, compilation and streams are "
+                               "set on the servers; drop --quant, --compile, --ov-streams")
+        if args.cpu_cores:
+            raise RuntimeError("--backend http: the servers own their cores; pin this "
+                               "process with taskset instead of --cpu-cores")
+        args.http_endpoints = [e.strip() for e in args.http_endpoints.split(",") if e.strip()]
+        args.replicas = len(args.http_endpoints)
+        args.http_model = args.http_model or re.sub(
+            r"[^a-z0-9]", "-", args.model.replace("/", "_").lower())
     if args.ov_streams < 1:
         raise RuntimeError("--ov-streams must be >= 1")
     if args.ov_streams > 1 and args.backend != "openvino":
         raise RuntimeError("--ov-streams is an OpenVINO option; add --backend openvino")
     # Streams always run in replica processes, even with --replicas 1: the
     # parent keeps doing only preprocessing and scheduling.
-    pooled = args.replicas > 1 or args.ov_streams > 1
+    pooled = args.replicas > 1 or args.ov_streams > 1 or args.backend == "http"
     if quantize.is_static(args.quant):
         if not args.compile:
             raise RuntimeError(
@@ -1468,8 +1551,13 @@ def main():
     log(f"GPU        : {hostinfo.gpu_sku()}")
     log(f"Dtype      : {args.dtype}")
     log(f"Quant      : {quantize.describe(args.quant)}")
-    log(f"Backend    : " + (ov_backend.describe(args.dtype) if args.backend == "openvino"
-                           else f"pytorch {torch.__version__.split('+')[0]}"))
+    if args.backend == "http":
+        log(f"Backend    : http (KServe v2 REST, {len(args.http_endpoints)} endpoint(s), "
+            f"model {args.http_model}; precision and threads set on the servers)")
+        log(f"Endpoints  : {','.join(args.http_endpoints)}")
+    else:
+        log(f"Backend    : " + (ov_backend.describe(args.dtype) if args.backend == "openvino"
+                               else f"pytorch {torch.__version__.split('+')[0]}"))
     log(f"Workload   : {args.workload}")
     if is_video:
         log(f"Stream fps : {args.fps:g}")
@@ -1573,7 +1661,9 @@ def main():
         if args.backend == "openvino":
             # Once, here, before any replica exists to race for the file.
             ov_backend.ensure_ir(args.model, MODELS_DIR, log=log)
-        if args.ov_streams > 1:
+        if args.backend == "http":
+            replica_pool = HttpPool(args.http_endpoints, args.http_model, is_dino)
+        elif args.ov_streams > 1:
             replica_pool = StreamPool(args.replicas, args.ov_streams, cfg_for, log=log)
         else:
             replica_pool = sweep.ReplicaPool(args.replicas, _vit_replica, cfg_for,

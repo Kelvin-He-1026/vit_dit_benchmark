@@ -126,6 +126,8 @@ def main():
             existed = (Path(args.out) if args.out else ov_backend.ir_dir(name, MODELS_DIR)) / "model.xml"
             if existed.is_file() and not args.force:
                 print(f"    already converted at {existed} (--force to redo)")
+                # Older conversions lack these; cheap to (re)write.
+                ov_backend.write_sidecars(name, MODELS_DIR, existed.parent)
             xml = ov_backend.ensure_ir(name, MODELS_DIR, log=print, force=args.force,
                                        out_dir=args.out, fp16_weights=args.fp16_weights)
             if not args.no_verify and not verify(name, xml):

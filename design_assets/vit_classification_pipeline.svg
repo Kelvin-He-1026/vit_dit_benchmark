@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1190" viewBox="0 0 1800 1190"><rect width="100%" height="100%" fill="#f5f7fa"/>
+<text x="70" y="58" font-family="DejaVu Sans,Arial,sans-serif" font-size="18" font-weight="700" fill="#c52332">VISION TRANSFORMER</text>
+<text x="70" y="118" font-family="DejaVu Sans,Arial,sans-serif" font-size="43" font-weight="700" fill="#152b43">Image Classification Inference Pipeline</text>
+<text x="70" y="159" font-family="DejaVu Sans,Arial,sans-serif" font-size="22" font-weight="400" fill="#63748a">Lenovo Validated Design  |  Architecture draft</text>
+<rect x="70" y="202" width="1660" height="260" rx="16" fill="#eaf0f6"/>
+<text x="94" y="235" font-family="DejaVu Sans,Arial,sans-serif" font-size="19" font-weight="700" fill="#41536b">01  REQUEST &amp; INPUT PREPARATION</text>
+<rect x="94" y="270" width="360" height="155" rx="16" fill="#ffffff" stroke="#c3ccd8" stroke-width="2"/>
+<rect x="112" y="288" width="36" height="34" rx="8" fill="#e9edf2"/>
+<text x="120" y="309" font-family="DejaVu Sans,Arial,sans-serif" font-size="18" font-weight="700" fill="#41536b">1</text>
+<text x="160" y="313" font-family="DejaVu Sans,Arial,sans-serif" font-size="22" font-weight="700" fill="#132c45">Submit image</text>
+<text x="114" y="359" font-family="DejaVu Sans,Arial,sans-serif" font-size="19" font-weight="400" fill="#53647a">User sends JPEG / PNG</text>
+<text x="114" y="388" font-family="DejaVu Sans,Arial,sans-serif" font-size="19" font-weight="400" fill="#53647a">through the service API</text>
+<rect x="511" y="270" width="360" height="155" rx="16" fill="#ffffff" stroke="#cbdce8" stroke-width="2"/>
+<rect x="529" y="288" width="36" height="34" rx="8" fill="#dceef6"/>
+<text x="537" y="309" font-family="DejaVu Sans,Arial,sans-serif" font-size="18" font-weight="700" fill="#41536b">2</text>
+<text x="577" y="313" font-family="DejaVu Sans,Arial,sans-serif" font-size="22" font-weight="700" fill="#132c45">Validate &amp; decode</text>
+<text x="531" y="359" font-family="DejaVu Sans,Arial,sans-serif" font-size="19" font-weight="400" fill="#53647a">Check request and image*</text>
+<text x="531" y="388" font-family="DejaVu Sans,Arial,sans-serif" font-size="19" font-weight="400" fill="#53647a">Decode image to RGB</text>
+<rect x="928" y="270" width="360" height="155" rx="16" fill="#ffffff" stroke="#cbdce8" stroke-width="2"/>
+<rect x="946" y="288" width="36" height="34" rx="8" fill="#dceef6"/>
+<text x="954" y="309" font-family="DejaVu Sans,Arial,sans-serif" font-size="18" font-weight="700" fill="#41536b">3</text>
+<text x="994" y="313" font-family="DejaVu Sans,Arial,sans-serif" font-size="22" font-weight="700" fill="#132c45">Preprocess image</text>
+<text x="948" y="359" font-family="DejaVu Sans,Arial,sans-serif" font-size="19" font-weight="400" fill="#53647a">Resize / crop / normalize</text>
+<text x="948" y="388" font-family="DejaVu Sans,Arial,sans-serif" font-size="19" font-weight="400" fill="#53647a">Create FP32 input tensor</text>
+<rect x="1345" y="270" width="360" height="155" rx="16" fill="#ffffff" stroke="#cbdce8" stroke-width="2"/>
+<rect x="1363" y="288" width="36" height="34" rx="8" fill="#dceef6"/>
+<text x="1371" y="309" font-family="DejaVu Sans,Arial,sans-serif" font-size="18" font-weight="700" fill="#41536b">4</text>
+<text x="1411" y="313" font-family="DejaVu Sans,Arial,sans-serif" font-size="22" font-weight="700" fill="#132c45">Queue &amp; batch</text>
+<text x="1365" y="359" font-family="DejaVu Sans,Arial,sans-serif" font-size="19" font-weight="400" fill="#53647a">Collect prepared requests</text>
+<text x="1365" y="388" font-family="DejaVu Sans,Arial,sans-serif" font-size="19" font-weight="400" fill="#53647a">Flush at size or time limit</text>
+<path d="M454 348 L511 348" stroke="#8290a5" stroke-width="3"/><polygon points="511,348 501,342 501,354" fill="#8290a5"/>
+<path d="M871 348 L928 348" stroke="#8290a5" stroke-width="3"/><polygon points="928,348 918,342 918,354" fill="#8290a5"/>
+<path d="M1288 348 L1345 348" stroke="#8290a5" stroke-width="3"/><polygon points="1345,348 1335,342 1335,354" fill="#8290a5"/>
+<path d="M1525 425 L1525 460" stroke="#8290a5" stroke-width="3"/><polygon points="1525,460 1519,450 1531,450" fill="#8290a5"/>
+<rect x="70" y="493" width="1660" height="300" rx="16" fill="#e5f0f5" stroke="#bdd5e2" stroke-width="2"/>
+<text x="94" y="529" font-family="DejaVu Sans,Arial,sans-serif" font-size="19" font-weight="700" fill="#175371">02  ViT MODEL INFERENCE</text>
+<text x="94" y="566" font-family="DejaVu Sans,Arial,sans-serif" font-size="21" font-weight="400" fill="#43677d">PyTorch or OpenVINO  |  BF16 inference configuration</text>
+<rect x="94" y="605" width="360" height="155" rx="16" fill="#ffffff" stroke="#cbdce8" stroke-width="2"/>
+<rect x="112" y="623" width="36" height="34" rx="8" fill="#dceef6"/>
+<text x="120" y="644" font-family="DejaVu Sans,Arial,sans-serif" font-size="18" font-weight="700" fill="#41536b">5</text>
+<text x="160" y="648" font-family="DejaVu Sans,Arial,sans-serif" font-size="22" font-weight="700" fill="#132c45">Patch embedding</text>
+<text x="114" y="694" font-family="DejaVu Sans,Arial,sans-serif" font-size="19" font-weight="400" fill="#53647a">Split image into patches</text>
+<text x="114" y="723" font-family="DejaVu Sans,Arial,sans-serif" font-size="19" font-weight="400" fill="#53647a">Project patches into vectors</text>
+<rect x="511" y="605" width="360" height="155" rx="16" fill="#ffffff" stroke="#cbdce8" stroke-width="2"/>
+<rect x="529" y="623" width="36" height="34" rx="8" fill="#dceef6"/>
+<text x="537" y="644" font-family="DejaVu Sans,Arial,sans-serif" font-size="18" font-weight="700" fill="#41536b">6</text>
+<text x="577" y="648" font-family="DejaVu Sans,Arial,sans-serif" font-size="22" font-weight="700" fill="#132c45">Token sequence</text>
+<text x="531" y="694" font-family="DejaVu Sans,Arial,sans-serif" font-size="19" font-weight="400" fill="#53647a">Add a classification token</text>
+<text x="531" y="723" font-family="DejaVu Sans,Arial,sans-serif" font-size="19" font-weight="400" fill="#53647a">Add positional embeddings</text>
+<rect x="928" y="605" width="360" height="155" rx="16" fill="#ffffff" stroke="#cbdce8" stroke-width="2"/>
+<rect x="946" y="623" width="36" height="34" rx="8" fill="#dceef6"/>
+<text x="954" y="644" font-family="DejaVu Sans,Arial,sans-serif" font-size="18" font-weight="700" fill="#41536b">7</text>
+<text x="994" y="648" font-family="DejaVu Sans,Arial,sans-serif" font-size="22" font-weight="700" fill="#132c45">Encoder layers × L</text>
+<text x="948" y="694" font-family="DejaVu Sans,Arial,sans-serif" font-size="19" font-weight="400" fill="#53647a">Multi-head self-attention</text>
+<text x="948" y="723" font-family="DejaVu Sans,Arial,sans-serif" font-size="19" font-weight="400" fill="#53647a">MLP, norms &amp; residuals</text>
+<rect x="1345" y="605" width="360" height="155" rx="16" fill="#ffffff" stroke="#cbdce8" stroke-width="2"/>
+<rect x="1363" y="623" width="36" height="34" rx="8" fill="#dceef6"/>
+<text x="1371" y="644" font-family="DejaVu Sans,Arial,sans-serif" font-size="18" font-weight="700" fill="#41536b">8</text>
+<text x="1411" y="648" font-family="DejaVu Sans,Arial,sans-serif" font-size="22" font-weight="700" fill="#132c45">Classification head</text>
+<text x="1365" y="694" font-family="DejaVu Sans,Arial,sans-serif" font-size="19" font-weight="400" fill="#53647a">Read classification token</text>
+<text x="1365" y="723" font-family="DejaVu Sans,Arial,sans-serif" font-size="19" font-weight="400" fill="#53647a">Produce class scores</text>
+<path d="M1525 460 L1525 480 L82 480 L82 682 L94 682" fill="none" stroke="#8290a5" stroke-width="3"/>
+<path d="M454 682 L511 682" stroke="#8290a5" stroke-width="3"/><polygon points="511,682 501,676 501,688" fill="#8290a5"/>
+<path d="M871 682 L928 682" stroke="#8290a5" stroke-width="3"/><polygon points="928,682 918,676 918,688" fill="#8290a5"/>
+<path d="M1288 682 L1345 682" stroke="#8290a5" stroke-width="3"/><polygon points="1345,682 1335,676 1335,688" fill="#8290a5"/>
+<path d="M1525 760 L1525 793" stroke="#8290a5" stroke-width="3"/><polygon points="1525,793 1519,783 1531,783" fill="#8290a5"/>
+<rect x="70" y="825" width="1660" height="245" rx="16" fill="#eaf0f6"/>
+<text x="94" y="860" font-family="DejaVu Sans,Arial,sans-serif" font-size="19" font-weight="700" fill="#41536b">03  POSTPROCESSING &amp; RESPONSE</text>
+<rect x="94" y="885" width="500" height="155" rx="16" fill="#ffffff" stroke="#cbdce8" stroke-width="2"/>
+<rect x="112" y="903" width="36" height="34" rx="8" fill="#dceef6"/>
+<text x="120" y="924" font-family="DejaVu Sans,Arial,sans-serif" font-size="18" font-weight="700" fill="#41536b">9</text>
+<text x="160" y="928" font-family="DejaVu Sans,Arial,sans-serif" font-size="22" font-weight="700" fill="#132c45">Select predictions</text>
+<text x="114" y="974" font-family="DejaVu Sans,Arial,sans-serif" font-size="19" font-weight="400" fill="#53647a">Benchmark: argmax → top-1 class</text>
+<text x="114" y="1003" font-family="DejaVu Sans,Arial,sans-serif" font-size="19" font-weight="400" fill="#53647a">Service option: top-k / softmax</text>
+<rect x="650" y="885" width="500" height="155" rx="16" fill="#ffffff" stroke="#c3ccd8" stroke-width="2"/>
+<rect x="668" y="903" width="36" height="34" rx="8" fill="#e9edf2"/>
+<text x="676" y="924" font-family="DejaVu Sans,Arial,sans-serif" font-size="18" font-weight="700" fill="#41536b">10</text>
+<text x="716" y="928" font-family="DejaVu Sans,Arial,sans-serif" font-size="22" font-weight="700" fill="#132c45">Build response</text>
+<text x="670" y="974" font-family="DejaVu Sans,Arial,sans-serif" font-size="19" font-weight="400" fill="#53647a">Map class IDs to label names</text>
+<text x="670" y="1003" font-family="DejaVu Sans,Arial,sans-serif" font-size="19" font-weight="400" fill="#53647a">Serialize labels and scores*</text>
+<rect x="1206" y="885" width="500" height="155" rx="16" fill="#ffffff" stroke="#c3ccd8" stroke-width="2"/>
+<rect x="1224" y="903" width="36" height="34" rx="8" fill="#e9edf2"/>
+<text x="1232" y="924" font-family="DejaVu Sans,Arial,sans-serif" font-size="18" font-weight="700" fill="#41536b">11</text>
+<text x="1272" y="928" font-family="DejaVu Sans,Arial,sans-serif" font-size="22" font-weight="700" fill="#132c45">Return to user</text>
+<text x="1226" y="974" font-family="DejaVu Sans,Arial,sans-serif" font-size="19" font-weight="400" fill="#53647a">Send classification results</text>
+<text x="1226" y="1003" font-family="DejaVu Sans,Arial,sans-serif" font-size="19" font-weight="400" fill="#53647a">through the service API*</text>
+<path d="M594 962 L650 962" stroke="#8290a5" stroke-width="3"/><polygon points="650,962 640,956 640,968" fill="#8290a5"/>
+<path d="M1150 962 L1206 962" stroke="#8290a5" stroke-width="3"/><polygon points="1206,962 1196,956 1196,968" fill="#8290a5"/>
+<path d="M1525 793 L1525 811 L82 811 L82 962 L94 962" fill="none" stroke="#8290a5" stroke-width="3"/>
+<text x="70" y="1109" font-family="DejaVu Sans,Arial,sans-serif" font-size="19" font-weight="400" fill="#53647a">Scope: standard ViT classifier with a CLS token; ResNet and Swin use different model internals.</text>
+<text x="70" y="1140" font-family="DejaVu Sans,Arial,sans-serif" font-size="18" font-weight="400" fill="#53647a">* API handling, request validation and response formatting are proposed service stages, not benchmark-validated features.</text>
+<text x="70" y="1170" font-family="DejaVu Sans,Arial,sans-serif" font-size="18" font-weight="400" fill="#53647a">Precision note: FP32 preprocessing / OpenVINO input is compatible with BF16 inference configuration.</text>
+</svg>

@@ -177,6 +177,45 @@ python -m vit.server_vit_benchmark --backend openvino --model google/vit-base-pa
 BACKEND=openvino RUN_CODE=openvino-v1 bash vit/run_server_vit_sweep.sh
 ```
 
+### Serving from containers (OpenVINO Model Server)
+
+`deploy/ovms/start_ovms.sh MODEL REPLICAS THREADS` starts one OpenVINO Model
+Server container per replica, each pinned to its own cores and socket, serving
+a model converted with `python -m common.convert_openvino`. It prints the
+endpoint list; `--backend http` then measures them with the same queue,
+batching and SLA scoring as every other backend, the harness pinned to the
+cores the containers leave free:
+
+```bash
+bash deploy/ovms/start_ovms.sh google/vit-base-patch16-224 7 12      # cores 0-47,48-83
+taskset -c 84-95 python -m vit.server_vit_benchmark --backend http \
+    --http-endpoints <list it printed> --model google/vit-base-patch16-224 \
+    --device cpu --dtype bfloat16 --threads 12 --sla-ms 100
+bash deploy/ovms/stop_ovms.sh
+```
+
+`common/ovms_client.py` is the client on its own (KServe v2 REST, binary
+tensors).
+
+### Web UI (Gradio)
+
+`ui/app.py` is a small web page in front of those containers: a Classify tab
+(top-5 ImageNet classes from ViT-B, ViT-L, Swin-B or ResNet-50) and a Detect
+tab (YOLO11m boxes drawn on the image). It runs in its own environment,
+because current Gradio needs a newer `huggingface_hub` than the benchmarks
+pin:
+
+```bash
+python3.12 -m venv ui_env && ui_env/bin/pip install gradio==6.31.0 requests
+bash deploy/ovms/start_ovms.sh google/vit-base-patch16-224 1 12 9100
+bash deploy/ovms/start_ovms.sh Ultralytics/yolo11m 1 8 9150
+ui_env/bin/python ui/app.py                 # http://<server>:7860
+```
+
+It needs no PyTorch: preprocessing and labels come from the
+`preprocessor_config.json` and `labels.json` that `common.convert_openvino`
+saves next to each converted model.
+
 ### Serving from several replicas (both sockets)
 
 `server_vit_benchmark.py --replicas N` runs N inference processes behind one

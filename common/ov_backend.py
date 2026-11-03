@@ -157,7 +157,7 @@ def ensure_ir(model_name, models_dir, log=print, force=False, out_dir=None,
     ov.save_model(converted, str(tmp), compress_to_fp16=fp16_weights)
     tmp.with_suffix(".bin").replace(path.with_suffix(".bin"))
     tmp.replace(path)
-    processor.save_pretrained(str(path.parent))
+    write_sidecars(model_name, models_dir, path.parent, model=model, processor=processor)
     meta = {
         "source_model": model_name,
         "task": {"classifier": "image-classification", "encoder": "feature-extraction",
@@ -174,6 +174,38 @@ def ensure_ir(model_name, models_dir, log=print, force=False, out_dir=None,
     log(f"  {model_name}: converted to OpenVINO in {time.perf_counter() - t0:.0f} s "
         f"({path.with_suffix('.bin').stat().st_size / 2**20:.0f} MiB)")
     return path
+
+
+def write_sidecars(model_name, models_dir, out_dir, model=None, processor=None):
+    """The files next to model.xml that a client needs, without torch:
+
+      preprocessor_config.json  how to turn an image into the model's input
+      labels.json               class index -> name (classifiers and YOLO)
+
+    Written by ensure_ir() on conversion; call it alone to add them to a
+    model converted before they existed.
+    """
+    import json
+    from pathlib import Path
+
+    from common import vision_models
+
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    processor = processor or vision_models.load_processor(model_name, models_dir)
+    processor.save_pretrained(str(out_dir))
+    kind = vision_models.kind(model_name)
+    labels = None
+    if kind == "classifier":
+        model = model or vision_models.load_model(model_name, models_dir)
+        labels = {int(k): v for k, v in model.config.id2label.items()}
+    elif kind == "detector":
+        model = model or vision_models.load_model(model_name, models_dir)
+        labels = {int(k): v for k, v in model.inner.names.items()}
+    if labels is not None:
+        (out_dir / "labels.json").write_text(
+            json.dumps({str(k): labels[k] for k in sorted(labels)}, indent=1) + "\n",
+            encoding="utf-8")
 
 
 class OpenVINOModel:
