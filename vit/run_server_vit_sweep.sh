@@ -63,7 +63,7 @@ export TZ=America/New_York
 
 DRY_RUN="${DRY_RUN:-0}"
 FORCE="${FORCE:-0}"
-TIERS="${TIERS:-small medium giant cnn}"
+TIERS="${TIERS:-small medium giant cnn depth}"
 RUN_CODE="${RUN_CODE:-}"
 # ONLY narrows the sweep to models whose id contains one of these
 # comma-separated words, across whatever tiers are selected, e.g.
@@ -75,6 +75,13 @@ ONLY="${ONLY:-}"
 # A count that fills the machine (6 x 16 = 96) runs with the harness sharing
 # the replicas' cores, and is marked so in the log.
 REPLICAS="${REPLICAS:-}"
+# THREADS replaces each selected model's threads-per-replica the same way:
+#   ONLY=depth-anything-v2-base REPLICAS=4 THREADS=16
+THREADS="${THREADS:-}"
+if [[ -n $THREADS && ! $THREADS =~ ^[0-9]+(,[0-9]+)*$ ]]; then
+  echo "THREADS '$THREADS': give comma-separated counts, e.g. 8,16" >&2
+  exit 1
+fi
 if [[ -n $REPLICAS && ! $REPLICAS =~ ^[0-9]+(,[0-9]+)*$ ]]; then
   echo "REPLICAS '$REPLICAS': give comma-separated counts, e.g. 4,5,6" >&2
   exit 1
@@ -113,6 +120,12 @@ STATUS=server_vit_sweep.status
 SLA_SMALL="${SLA_SMALL:-100}"
 SLA_MEDIUM="${SLA_MEDIUM:-100}"
 SLA_GIANT="${SLA_GIANT:-500}"
+# Depth Anything V2 runs at 518 x 518 - about 7x the image tokens of a 224
+# ViT - so one image alone takes 57-245 ms (Base) and 142-507 ms (Large) on
+# 6-24 threads. A 100 ms target would fail every cell; these leave room for
+# queueing on top of the single-image time.
+SLA_DEPTH_BASE="${SLA_DEPTH_BASE:-500}"
+SLA_DEPTH_LARGE="${SLA_DEPTH_LARGE:-1000}"
 
 MAX_BATCH=16
 COMMON=(--device cpu --dtype bfloat16
@@ -196,6 +209,10 @@ SPECS=(
   # heads; 8 threads per replica measured best per core on OpenVINO among 4-24
   # while keeping batch-1 latency at ~20 ms.
   "cnn|Ultralytics/yolo11m|8|$SLA_SMALL|range"
+  # Depth Anything V2 (DINOv2 encoder, 12 / 16 heads). Thread counts are the
+  # fill sweep's provisional pick; update once it reports.
+  "depth|depth-anything/Depth-Anything-V2-Base-hf|8|$SLA_DEPTH_BASE|range"
+  "depth|depth-anything/Depth-Anything-V2-Large-hf|16|$SLA_DEPTH_LARGE|range"
 )
 
 # The 8-bit sweeps (QUANT=int8 or int8-static) run a narrower grid: the same
@@ -235,6 +252,10 @@ SPECS_FILL=(
   "small|microsoft/swin-base-patch4-window7-224|4,6,8|$SLA_SMALL|max"
   "cnn|microsoft/resnet-50|4,8,12,16|$SLA_SMALL|max"
   "cnn|Ultralytics/yolo11m|4,8,12,16|$SLA_SMALL|max"
+  # Depth Anything V2: thread counts from a single-image scan (img/s per core
+  # falls as threads rise, latency falls), each at the most copies that fit.
+  "depth|depth-anything/Depth-Anything-V2-Base-hf|6,8,12,16|$SLA_DEPTH_BASE|max"
+  "depth|depth-anything/Depth-Anything-V2-Large-hf|8,12,16,24|$SLA_DEPTH_LARGE|max"
 )
 [[ $GRID == fill ]] && SPECS=("${SPECS_FILL[@]}")
 MIN_REPLICAS=2
@@ -429,6 +450,7 @@ CELL_TOTAL=0
 for spec in "${SPECS[@]}"; do
   IFS='|' read -r tier model threads sla mode <<< "$spec"
   [[ -n $REPLICAS ]] && mode=$REPLICAS
+  [[ -n $THREADS ]] && threads=$THREADS
   [[ " $TIERS " == *" $tier "* ]] || continue
   selected "$model" || continue
   CELL_TOTAL=$(( CELL_TOTAL + $(plan "$tier" "$model" "$threads" "$sla" "$mode" | wc -l) ))
@@ -437,6 +459,7 @@ done
 for spec in "${SPECS[@]}"; do
   IFS='|' read -r tier model threads sla mode <<< "$spec"
   [[ -n $REPLICAS ]] && mode=$REPLICAS
+  [[ -n $THREADS ]] && threads=$THREADS
   if [[ " $TIERS " != *" $tier "* ]]; then
     log "--- skip ($tier tier not selected): $model"
     continue

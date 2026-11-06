@@ -16,6 +16,8 @@ What `out` holds depends on the model (kind() says which):
 
     classifier   out.logits, (batch, 1000) ImageNet classes - top-1 is scored
     encoder      out.last_hidden_state, (batch, tokens, width) - DINOv2
+    depth        out.logits, (batch, H, W) - Depth Anything's relative depth map;
+                 no accuracy is scored, and last_hidden_state is the same tensor
     detector     out.logits, (batch, 4 + classes, anchors) - YOLO's raw head
                  output before non-maximum suppression; no accuracy is scored,
                  and last_hidden_state is the same tensor
@@ -35,9 +37,11 @@ YOLO_MODELS = {
 
 
 def kind(model_name):
-    """'classifier', 'encoder' or 'detector'."""
+    """'classifier', 'encoder', 'detector' or 'depth'."""
     if model_name in YOLO_MODELS:
         return "detector"
+    if "depth-anything" in model_name.lower():
+        return "depth"
     if "dinov2" in model_name.lower():
         return "encoder"
     return "classifier"
@@ -149,6 +153,32 @@ def _yolo_module(model_name, cache_dir):
     return YoloModel(net).eval()
 
 
+def _depth_module(model_name, cache_dir, log=None):
+    """Depth Anything (DINOv2 encoder + DPT decoder) as an nn.Module whose one
+    output is the depth map, (batch, H, W), under the names the harnesses read."""
+    import torch
+    from transformers import AutoModelForDepthEstimation
+
+    from common import hub
+
+    net = hub.load_cached(AutoModelForDepthEstimation.from_pretrained, model_name,
+                          cache_dir=str(cache_dir), log=log).eval()
+
+    class DepthModel(torch.nn.Module):
+        def __init__(self, inner):
+            super().__init__()
+            self.inner = inner
+            self.config = inner.config
+
+        def forward(self, pixel_values=None, return_dict=True, **_unused):
+            depth = self.inner(pixel_values=pixel_values).predicted_depth
+            if not return_dict:
+                return (depth,)
+            return SimpleNamespace(logits=depth, last_hidden_state=depth)
+
+    return DepthModel(net).eval()
+
+
 # ---------------------------------------------------------------------------
 # Entry points
 # ---------------------------------------------------------------------------
@@ -163,6 +193,12 @@ def load_processor(model_name, cache_dir, use_fast=None, log=None):
     kwargs = {"cache_dir": str(cache_dir)}
     if use_fast is not None:
         kwargs["use_fast"] = use_fast
+    if kind(model_name) == "depth":
+        # Depth Anything's processor keeps each photo's aspect ratio by
+        # default, so photos come out at different sizes and cannot share a
+        # batch. A fixed 518 x 518 square is what makes it servable here (and
+        # what its own fixed-size exports use).
+        kwargs["keep_aspect_ratio"] = False
     return hub.load_cached(AutoImageProcessor.from_pretrained, model_name, log=log, **kwargs)
 
 
@@ -173,6 +209,9 @@ def load_model(model_name, cache_dir, log=None):
     from transformers import AutoModel, AutoModelForImageClassification
 
     from common import hub
+
+    if kind(model_name) == "depth":
+        return _depth_module(model_name, cache_dir, log)
 
     cls = AutoModel if kind(model_name) == "encoder" else AutoModelForImageClassification
     return hub.load_cached(cls.from_pretrained, model_name, cache_dir=str(cache_dir), log=log).eval()

@@ -22,6 +22,11 @@ MODELS = [
     # ultralytics package. Loaded through common/vision_models.py like every
     # other model; it is timed like the rest but has no accuracy score.
     "Ultralytics/yolo11m",
+    # Depth Anything V2 (DINOv2 encoder + DPT decoder), monocular depth at
+    # 518 x 518. Licence CC-BY-NC-4.0: non-commercial use only. Timed like
+    # the rest; no accuracy score.
+    "depth-anything/Depth-Anything-V2-Base-hf",
+    "depth-anything/Depth-Anything-V2-Large-hf",
 ]
 
 DATASET_NAME = "ILSVRC/imagenet-1k"
