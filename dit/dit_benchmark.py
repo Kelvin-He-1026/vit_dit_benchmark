@@ -57,8 +57,9 @@ from huggingface_hub.errors import GatedRepoError
 
 from common import hostinfo, hub, quantize, resources, sweep, util
 from common.util import sync
+from dit import dit_openvino
 from dit.dit_common import (MODELS, UNSUPPORTED, denoiser, load_prompts,
-                            step_kwargs, steps_for)
+                            resolution_for, step_kwargs, steps_for)
 
 OUTPUT_DIR = OUTPUT_ROOT / "dit_output"
 
@@ -79,12 +80,30 @@ def parse_args():
         help="Denoising steps. Default: per model - 20, except the "
         "step-distilled Sana-Sprint models, which run at 4.",
     )
-    p.add_argument("--height", type=int, default=1024)
-    p.add_argument("--width", type=int, default=1024)
+    p.add_argument("--height", type=int, default=None,
+                   help="Default: the model's native resolution (1024; "
+                   "SDXL-Turbo 512), see MODEL_RESOLUTION in dit/dit_common.py.")
+    p.add_argument("--width", type=int, default=None)
     p.add_argument("--warmup", type=int, default=3)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--device", choices=["cpu", "cuda"], default="cpu")
     p.add_argument("--dtype", choices=["float32", "bfloat16"], default="bfloat16")
+    p.add_argument(
+        "--backend", choices=["diffusers", "openvino"], default="diffusers",
+        help="What runs the pipeline in each --throughput replica: diffusers "
+        "(default) or the OpenVINO export from dit/dit_openvino.py. openvino "
+        "is CPU and --throughput only, and runs from ov_env.",
+    )
+    p.add_argument(
+        "--ov-weights", choices=dit_openvino.WEIGHTS, default="fp16",
+        help="--backend openvino: fp16 weights (default) or int8 weight-only.",
+    )
+    p.add_argument(
+        "--thp-alloc", action="store_true",
+        help="Set THP_MEM_ALLOC_ENABLE=1: PyTorch's large CPU tensors on "
+        "transparent huge pages. About 2x faster for diffusers on CPU at "
+        "1024 px; see server_dit_benchmark.py's MEMORY ALLOCATOR note.",
+    )
     p.add_argument(
         "--cpu-offload",
         choices=["auto", "always"],
@@ -260,11 +279,17 @@ def _dit_replica(conn, cfg, prompts):
         conn.send({"warning": f"interop threads left at default: {exc}"})
 
     device = cfg["device"]
+    is_ov = cfg.get("backend") == "openvino"
     dtype = _torch.float32 if cfg["dtype"] == "float32" else _torch.bfloat16
     try:
-        pipe = _hub.load_cached(
-            DiffusionPipeline.from_pretrained,
-            cfg["model"], torch_dtype=dtype, cache_dir=cfg["models_dir"])
+        if is_ov:
+            # Exported by the parent; compiled here for this replica's cores.
+            pipe, _ = dit_openvino.load(cfg["model"], cfg["ov_weights"],
+                                        cfg["threads"], cfg["dtype"], cfg["models_dir"])
+        else:
+            pipe = _hub.load_cached(
+                DiffusionPipeline.from_pretrained,
+                cfg["model"], torch_dtype=dtype, cache_dir=cfg["models_dir"])
     except Exception as exc:  # noqa: BLE001 - the parent turns this into a message
         conn.send({"error": f"{type(exc).__name__}: {str(exc)[:300]}"})
         return
@@ -283,7 +308,8 @@ def _dit_replica(conn, cfg, prompts):
         quantised, skipped = _quantize.count(den_module, cfg["quant"])
 
     try:
-        pipe = pipe.to(device)
+        if not is_ov:  # an OpenVINO pipeline is already compiled for the CPU
+            pipe = pipe.to(device)
     except _torch.cuda.OutOfMemoryError:
         free_b, total_b = _torch.cuda.mem_get_info()
         conn.send({"error": (
@@ -332,7 +358,7 @@ def _dit_replica(conn, cfg, prompts):
             generator = _torch.Generator(device=device).manual_seed(seed)
             t0 = time.perf_counter()
             with _torch.inference_mode():
-                pipe(batch, num_inference_steps=steps,
+                pipe(prompt=batch, num_inference_steps=steps,
                      height=cmd["height"], width=cmd["width"],
                      generator=generator, callback_on_step_end=on_step,
                      **_step_kwargs(cfg["model"], steps))
@@ -376,12 +402,12 @@ def _dit_replica(conn, cfg, prompts):
     conn.send({"stopped": True})
 
 
-def dit_cell(workers, n_replicas, bs, steps, args, sampler):
+def dit_cell(workers, n_replicas, bs, steps, args, sampler, res):
     """One (replicas, batch size) cell. Returns a record, or None if it OOMed."""
     conns = workers.conns[:n_replicas]
     for conn in conns:
-        conn.send({"bs": bs, "steps": steps, "height": args.height,
-                   "width": args.width, "measure_s": args.measure_s})
+        conn.send({"bs": bs, "steps": steps, "height": res[0],
+                   "width": res[1], "measure_s": args.measure_s})
     ready = [conn.recv() for conn in conns]
     if any("oom" in r for r in ready):
         return None
@@ -406,7 +432,12 @@ def dit_cell(workers, n_replicas, bs, steps, args, sampler):
         "s_per_image": elapsed * n_replicas / images,
         "steps_per_second": images * steps / elapsed,
         # Per generated image, so it is comparable across batch sizes.
-        "denoise_s_per_image": denoise_s * n_replicas / images,
+        # denoise_s is already summed over the replicas - replica-seconds, the
+        # same unit as s_per_image - so it is NOT scaled by n_replicas again.
+        # (It was until 2026-11: denoise_pct read 166-389% on every
+        # multi-replica CPU row filed before then; single-replica rows were
+        # right.)
+        "denoise_s_per_image": denoise_s / images,
         "images": images,
         "calls": calls,
         "elapsed_s": elapsed,
@@ -452,10 +483,18 @@ def run_throughput(args, prompts, timestamp, header, log):
     try:
         for model_name in models:
             steps = steps_for(model_name, args.steps)
+            res = resolution_for(model_name, args.height, args.width)
             for dtype_name, quant in precisions:
-                tag = sweep.precision_tag(dtype_name, quant)
+                is_ov = args.backend == "openvino"
+                tag = (dit_openvino.precision_tag(dtype_name, args.ov_weights)
+                       if is_ov else sweep.precision_tag(dtype_name, quant))
                 try:
                     quantize.check(quant, args.device, dtype_name)
+                    if is_ov:
+                        dit_openvino.check(args.device, quant, args.compile,
+                                           args.ov_weights)
+                        # Once, in the parent, before any replica reads it.
+                        dit_openvino.ensure_ir(model_name, args.ov_weights, log=log)
                 except RuntimeError as exc:
                     log("")
                     log(f"--- {model_name} @ {tag}: skipped - {exc}")
@@ -469,6 +508,8 @@ def run_throughput(args, prompts, timestamp, header, log):
                 def cfg_for(i, _m=model_name, _d=dtype_name, _q=quant,
                             _s=slices, _t=per_replica_threads):
                     return {
+                        "backend": args.backend,
+                        "ov_weights": args.ov_weights,
                         "model": _m,
                         "models_dir": str(MODELS_DIR),
                         "device": devices[i % len(devices)],
@@ -482,7 +523,7 @@ def run_throughput(args, prompts, timestamp, header, log):
 
                 log("")
                 log(f"--- {model_name} @ {tag} "
-                    f"({args.width}x{args.height}, {steps} steps, "
+                    f"({res[1]}x{res[0]}, {steps} steps, "
                     f"devices={','.join(devices)}, "
                     f"compile={'on' if args.compile else 'off'})")
                 log(f"{'replicas':>8} {'batch':>6} {'img/s':>9} {'s/img':>8} "
@@ -502,7 +543,8 @@ def run_throughput(args, prompts, timestamp, header, log):
                 try:
                     for n_replicas in replica_counts:
                         for bs in batch_sizes:
-                            cell = dit_cell(workers, n_replicas, bs, steps, args, sampler)
+                            cell = dit_cell(workers, n_replicas, bs, steps, args,
+                                            sampler, res)
                             if cell is None:
                                 log(f"{n_replicas:>8} {bs:>6}  skipped - out of "
                                     f"GPU memory at this batch/replica count")
@@ -559,9 +601,20 @@ def write_combination(args, header, model_name, dtype_name, quant, rows, best,
     lines = list(header)
     lines.append(f"Model      : {model_name}")
     lines.append(f"Steps      : {steps_for(model_name, args.steps)}")
+    h, w = resolution_for(model_name, args.height, args.width)
+    lines.append(f"Resolution : {w}x{h}")
     lines.append(f"Dtype      : {dtype_name}")
-    lines.append(f"Quant      : {quantize.describe(quant)}")
-    lines.append(f"Compile    : {'enabled' if args.compile else 'disabled'}")
+    if args.backend == "openvino":
+        lines.append(f"OpenVINO   : {dit_openvino.describe(dtype_name, args.ov_weights)}")
+        lines.append(f"OV weights : {args.ov_weights}")
+        lines.append("Quant      : " + (
+            "disabled" if args.ov_weights == "fp16" else
+            "int8 weight-only (OpenVINO/NNCF INT8_ASYM, every component; "
+            "activations at --dtype)"))
+        lines.append("Compile    : disabled (OpenVINO compiles the graph itself)")
+    else:
+        lines.append(f"Quant      : {quantize.describe(quant)}")
+        lines.append(f"Compile    : {'enabled' if args.compile else 'disabled'}")
     lines.append(f"Devices    : {','.join(devices)}")
     lines.append(f"Threads    : {per_replica_threads} per replica")
     lines.append("")
@@ -622,8 +675,12 @@ def write_combination(args, header, model_name, dtype_name, quant, rows, best,
                      f"{best['images_per_second_per_w']:.6f}")
 
     slug = model_name.replace("/", "_")
-    tag = sweep.precision_tag(dtype_name, quant)
-    path = OUTPUT_DIR / f"dit_throughput_{slug}_{tag}_{timestamp}.txt"
+    if args.backend == "openvino":
+        tag = dit_openvino.precision_tag(dtype_name, args.ov_weights)
+        path = OUTPUT_DIR / f"dit_throughput_ov_{slug}_{tag}_{timestamp}.txt"
+    else:
+        tag = sweep.precision_tag(dtype_name, quant)
+        path = OUTPUT_DIR / f"dit_throughput_{slug}_{tag}_{timestamp}.txt"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
 
@@ -640,6 +697,15 @@ def main():
 
     if args.device == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA requested but torch.cuda.is_available() is False")
+    if args.backend == "openvino":
+        if not args.throughput:
+            raise RuntimeError("--backend openvino runs in --throughput mode only; "
+                               "for latency under load use server_dit_benchmark.py")
+        dit_openvino.check(args.device, "none", args.compile, args.ov_weights)
+    if args.thp_alloc:
+        # Read by PyTorch's CPU allocator; spawned replicas inherit it.
+        import os
+        os.environ["THP_MEM_ALLOC_ENABLE"] = "1"
 
     if args.compile and args.dtype != "bfloat16" and not args.throughput:
         raise RuntimeError("--compile is only supported with --dtype bfloat16")
@@ -681,6 +747,11 @@ def main():
     if not args.throughput:
         log(f"Model      : {args.model}")
     log(f"Device     : {args.device}")
+    log(f"Backend    : {args.backend}")
+    import os
+    log("Allocator  : " + ("THP_MEM_ALLOC_ENABLE=1 (PyTorch large CPU tensors on "
+                           "transparent huge pages)"
+                           if os.environ.get("THP_MEM_ALLOC_ENABLE") == "1" else "default"))
     log(f"Server     : {hostinfo.server_sku()}")
     log(f"CPU        : {hostinfo.cpu_sku()}")
     log(f"CPU cores  : {hostinfo.cpu_topology()}")
@@ -688,7 +759,12 @@ def main():
     if not args.throughput:
         log(f"Dtype      : {args.dtype}")
     log(f"Samples    : {args.samples}")
-    log(f"Resolution : {args.width}x{args.height}")
+    if not args.throughput:
+        args.height, args.width = resolution_for(args.model, args.height, args.width)
+    # A sweep can mix models with different native resolutions (SDXL-Turbo is
+    # 512); there each combination's file carries its own Resolution line.
+    log(f"Resolution : {args.width}x{args.height}" if args.height
+        else "Resolution : per model (native)")
     if not args.throughput:
         # A sweep can mix models with different defaults (Sana-Sprint runs at
         # 4), so there each combination's file carries its own Steps line.
@@ -762,7 +838,7 @@ def main():
         generator = torch.Generator(device=args.device).manual_seed(args.seed)
         with torch.inference_mode():
             _ = pipe(
-                indexed_prompts[0][1],
+                prompt=indexed_prompts[0][1],
                 num_inference_steps=args.steps,
                 height=args.height,
                 width=args.width,
@@ -834,7 +910,7 @@ def main():
         for i in range(args.warmup):
             generator = torch.Generator(device=args.device).manual_seed(args.seed + i)
             _ = pipe(
-                indexed_prompts[0][1],
+                prompt=indexed_prompts[0][1],
                 num_inference_steps=args.steps,
                 height=args.height,
                 width=args.width,
@@ -854,7 +930,7 @@ def main():
             sync(args.device)
             t0 = time.perf_counter()
             _ = pipe(
-                prompt,
+                prompt=prompt,
                 num_inference_steps=args.steps,
                 height=args.height,
                 width=args.width,

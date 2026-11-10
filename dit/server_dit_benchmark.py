@@ -123,6 +123,32 @@ BACKENDS
       pipelines); without it the server runs --enforce-eager. --quant fp8 is
       vLLM-Omni's own fp8 method, not the torchao recipe; int8 is refused.
 
+  --backend openvino runs the same replica processes, router, queue and stage
+  split as diffusers, but each replica loads the pipeline exported by
+  dit/dit_openvino.py and compiled by OpenVINO's CPU plugin for its own
+  cores and --threads. The pipeline class is a subclass of the diffusers one,
+  so the denoising loop, scheduler, seeded latents and step callback are the
+  same code: only the network calls (text encoder, transformer, VAE) change.
+  Results are filed as server_dit_ov_* with "Backend : openvino", so they sit
+  beside diffusers cells of the same layout in the consolidated CSVs.
+    - CPU only, and run from ov_env (ov_env/bin/python -m dit.server_dit_benchmark);
+      see requirements-openvino.txt.
+    - No --compile or --quant: OpenVINO compiles the graph itself, and
+      --ov-weights int8 is its weight-only int8, not a torchao recipe.
+    - The export happens once, in the parent, before any replica starts.
+
+MEMORY ALLOCATOR (--thp-alloc)
+  PyTorch's CPU allocator hands every large tensor straight to the kernel, so
+  a 1024 px VAE decode maps and zero-fills hundreds of MB of fresh pages per
+  call. Measured on Sana-Sprint 0.6B, one 6740P socket, compiled: 4.6 s per
+  image, a third of the CPU time spent in the kernel on 42 M page faults.
+  THP_MEM_ALLOC_ENABLE=1 makes the allocator ask for transparent huge pages
+  (this box runs THP in madvise mode): 1.9 s, 30x fewer faults, VAE decode
+  3.4 s -> 1.0 s. --thp-alloc sets it for every replica; it is logged as
+  "Allocator" either way, since it changes PyTorch numbers by 2x and runs
+  with and without it must not be mixed. OpenVINO manages its own buffers and
+  is barely affected.
+
 POWER
   GPU power is NVML board power. CPU power is RAPL for every package on the
   box, so a one-socket run still includes the idle socket. Neither is
@@ -131,7 +157,7 @@ POWER
 
 OUTPUT
   <OUTPUT_ROOT>/server_dit_output/server_dit_<model>_<precision>_<device><N>r_<ts>.txt
-  (server_dit_vllm_... for --backend vllm)
+  (server_dit_vllm_... for --backend vllm, server_dit_ov_... for openvino)
   plus a _requests.csv with every request's stage timings, and a few
   calibration images for sanity checks (a broken fp8 run generates noise fast).
 """
@@ -172,8 +198,9 @@ import torch
 
 from common import hostinfo, quantize, resources, sweep, util
 from common.util import percentile, slope
+from dit import dit_openvino
 from dit.dit_common import (GATED, MODELS, UNSUPPORTED, denoiser, load_prompts,
-                            step_kwargs, steps_for)
+                            resolution_for, step_kwargs, steps_for)
 
 OUTPUT_DIR = OUTPUT_ROOT / "server_dit_output"
 
@@ -203,10 +230,16 @@ def parse_args():
         "Letters, digits, '.', '_' and '-' only.",
     )
     p.add_argument(
-        "--backend", choices=["diffusers", "vllm"], default="diffusers",
+        "--backend", choices=["diffusers", "vllm", "openvino"], default="diffusers",
         help="What serves the requests: diffusers pipelines in worker "
-        "processes (default), or a vLLM-Omni server. See BACKENDS in the "
-        "module docstring.",
+        "processes (default), a vLLM-Omni server, or OpenVINO-compiled "
+        "pipelines in worker processes. See BACKENDS in the module docstring.",
+    )
+    p.add_argument(
+        "--thp-alloc", action="store_true",
+        help="Set THP_MEM_ALLOC_ENABLE=1 for the replicas: PyTorch's large CPU "
+        "tensors on transparent huge pages. About 2x faster for the diffusers "
+        "backend at 1024 px; see MEMORY ALLOCATOR in the module docstring.",
     )
     p.add_argument("--device", choices=["cpu", "cuda"], default="cpu")
     p.add_argument("--dtype", choices=["float32", "bfloat16"], default="bfloat16")
@@ -226,8 +259,10 @@ def parse_args():
         help="Denoising steps. Default: per model - 20, except the "
         "step-distilled Sana-Sprint models, which run at 4.",
     )
-    p.add_argument("--height", type=int, default=1024)
-    p.add_argument("--width", type=int, default=1024)
+    p.add_argument("--height", type=int, default=None,
+                   help="Default: the model's native resolution (1024; "
+                   "SDXL-Turbo 512), see MODEL_RESOLUTION in dit/dit_common.py.")
+    p.add_argument("--width", type=int, default=None)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument(
         "--prompts", type=int, default=1000,
@@ -312,6 +347,14 @@ def parse_args():
         "--vllm-extra-args", default="",
         help="Extra arguments appended to `vllm-omni serve`, as one string, "
         "e.g. \"--vae-use-tiling\". Logged in the header.",
+    )
+
+    o = p.add_argument_group("openvino backend")
+    o.add_argument(
+        "--ov-weights", choices=dit_openvino.WEIGHTS, default="fp16",
+        help="Which export to load: fp16 weights (default) or int8 weight-only "
+        "compression. Exported on first use by dit/dit_openvino.py. The "
+        "compute precision is --dtype either way.",
     )
 
     m = p.add_argument_group("measurement")
@@ -410,6 +453,7 @@ def _replica(conn, cfg, _payload):
 
     device = cfg["device"]
     is_cuda = device.startswith("cuda")
+    is_ov = cfg.get("backend") == "openvino"
     dtype = _torch.float32 if cfg["dtype"] == "float32" else _torch.bfloat16
 
     # Checked here rather than in the parent: quantize.check reads the compute
@@ -423,10 +467,18 @@ def _replica(conn, cfg, _payload):
         conn.send({"error": str(exc)})
         return
 
+    ov_config = None
     try:
-        pipe = _hub.load_cached(
-            DiffusionPipeline.from_pretrained,
-            cfg["model"], torch_dtype=dtype, cache_dir=cfg["models_dir"])
+        if is_ov:
+            # Exported by the parent already; this only reads and compiles it,
+            # inside the affinity mask set above.
+            pipe, ov_config = dit_openvino.load(
+                cfg["model"], cfg["ov_weights"], cfg["threads"], cfg["dtype"],
+                cfg["models_dir"])
+        else:
+            pipe = _hub.load_cached(
+                DiffusionPipeline.from_pretrained,
+                cfg["model"], torch_dtype=dtype, cache_dir=cfg["models_dir"])
     except GatedRepoError:
         conn.send({"error": (
             f"{cfg['model']} is gated. Accept its licence at "
@@ -446,7 +498,11 @@ def _replica(conn, cfg, _payload):
 
     # PixArt-Sigma predates callback_on_step_end and swallows it into **kwargs
     # without calling it, so it needs the legacy per-step callback instead.
-    params = inspect.signature(pipe.__call__).parameters
+    # An OpenVINO pipeline's own __call__ is (*args, **kwargs) and forwards to
+    # the diffusers class it wraps, so read the signature from that class.
+    call = (pipe.auto_model_class.__call__ if hasattr(pipe, "auto_model_class")
+            else pipe.__call__)
+    params = inspect.signature(call).parameters
     modern_callback = "callback_on_step_end" in params
     legacy_callback = "callback" in params and "callback_steps" in params
 
@@ -530,7 +586,9 @@ def _replica(conn, cfg, _payload):
 
     trial = [{"prompt": "a photograph of a red bicycle leaning on a wall",
               "seed": cfg["seed"], "save": None}]
-    if not is_cuda:
+    if is_ov:
+        placement = "cpu (openvino)"
+    elif not is_cuda:
         pipe = pipe.to("cpu")
         placement = "cpu"
     elif cfg["placement"] == "offload":
@@ -577,6 +635,17 @@ def _replica(conn, cfg, _payload):
         "quantised": quantised,
         "skipped": skipped,
     }
+    if ov_config is not None:
+        # What the plugin actually compiled with, read back rather than
+        # assumed from the request.
+        part = getattr(pipe, den_name).request
+        started["ov"] = {}
+        for k in ("INFERENCE_NUM_THREADS", "NUM_STREAMS", "INFERENCE_PRECISION_HINT",
+                  "ENABLE_CPU_PINNING"):
+            v = part.get_property(k)
+            # The precision comes back as an ov.Type; its short name is "bf16".
+            started["ov"][k] = (v.get_type_name() if hasattr(v, "get_type_name")
+                                else str(v))
     if is_cuda:
         uuid = getattr(_torch.cuda.get_device_properties(device), "uuid", None)
         started["gpu_uuid"] = str(uuid) if uuid is not None else None
@@ -1048,12 +1117,16 @@ class ServiceModel:
 
     def mean_latency(self, lam):
         a = lam * self.s
-        if a >= self.c:
+        # Both guards: at rho = 1.00 exactly (the ladder's 1.0 rung) a can
+        # round to a hair under c while c/s - lam rounds to exactly 0, which
+        # used to raise ZeroDivisionError and lose the whole run.
+        headroom = self.c / self.s - lam
+        if a >= self.c or headroom <= 0 or 1 - a / self.c <= 0:
             return math.inf
         terms = sum(a ** k / math.factorial(k) for k in range(self.c))
         top = a ** self.c / math.factorial(self.c) / (1 - a / self.c)
         erlang_c = top / (terms + top)
-        wq = erlang_c / (self.c / self.s - lam) * (1 + self.cs2) / 2
+        wq = erlang_c / headroom * (1 + self.cs2) / 2
         return self.s + wq
 
 
@@ -1326,6 +1399,8 @@ class DiffusersBackend:
     def cfg_for(self, i):
         a = self.args
         return {
+            "backend": a.backend,
+            "ov_weights": a.ov_weights,
             "model": a.model,
             "models_dir": str(MODELS_DIR),
             "device": self.devices[i % len(self.devices)],
@@ -1419,6 +1494,43 @@ class DiffusersBackend:
     def close(self):
         if self.pool is not None:
             self.pool.close()
+
+
+class OpenVinoBackend(DiffusersBackend):
+    """OpenVINO-compiled pipelines in worker processes, one per replica.
+
+    Everything but the model load is DiffusersBackend's: same replica
+    processes, pinning, warmup, calibration, router and stage split.
+    """
+
+    runtime = "openvino"
+    file_prefix = "server_dit_ov"
+
+    def header(self):
+        a = self.args
+        lines = super().header()
+        lines[0] = ("Quant      : disabled" if a.ov_weights == "fp16" else
+                    "Quant      : int8 weight-only (OpenVINO/NNCF INT8_ASYM, "
+                    "every component; activations at --dtype)")
+        lines.insert(0, f"OpenVINO   : {dit_openvino.describe(a.dtype, a.ov_weights)}")
+        lines.insert(1, f"OV weights : {a.ov_weights}")
+        return lines
+
+    def start(self):
+        # Once, in the parent, so replicas never race to write the folder.
+        path = dit_openvino.ensure_ir(self.args.model, self.args.ov_weights,
+                                      log=self.log)
+        self.log(f"OV model   : {path}")
+        self.pool = sweep.ReplicaPool(self.n_replicas, _replica, self.cfg_for,
+                                      None, log=self.log)
+        self.log("Compile    : disabled (OpenVINO compiles the graph itself; "
+                 "torch.compile does not apply)")
+        for i, s in enumerate(self.pool.settings):
+            ov = s.get("ov", {})
+            self.log(f"  replica {i}: cpu, {ov.get('INFERENCE_NUM_THREADS', '?')} "
+                     f"OpenVINO threads, {ov.get('NUM_STREAMS', '?')} stream, "
+                     f"{ov.get('INFERENCE_PRECISION_HINT', '?')}, pinning "
+                     f"{ov.get('ENABLE_CPU_PINNING', '?')}, {s['cores']} cores visible")
 
 
 class VllmBackend:
@@ -1807,6 +1919,7 @@ def main():
         raise RuntimeError(
             f"--run-code {args.run_code!r}: use letters, digits, '.', '_' and '-' only")
     args.steps = steps_for(args.model, args.steps)
+    args.height, args.width = resolution_for(args.model, args.height, args.width)
     timestamp = util.timestamp()
 
     if args.model in UNSUPPORTED:
@@ -1817,6 +1930,18 @@ def main():
     # The vLLM backend never touches CUDA from this process; the server does.
     if args.backend == "diffusers" and args.device == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA requested but torch.cuda.is_available() is False")
+    if args.backend == "openvino":
+        dit_openvino.check(args.device, args.quant, args.compile, args.ov_weights)
+        _, ov_class = dit_openvino.pipeline_class(args.model)
+        if ov_class is None:
+            raise RuntimeError(
+                f"{args.model} has no OpenVINO pipeline in optimum-intel "
+                f"{dit_openvino.optimum_version()}; it cannot run under "
+                f"--backend openvino.")
+    if args.thp_alloc:
+        # Read by PyTorch's CPU allocator; replicas are spawned, so they
+        # inherit it from here.
+        os.environ["THP_MEM_ALLOC_ENABLE"] = "1"
     if args.compile and args.dtype != "bfloat16":
         raise RuntimeError("--compile is only supported with --dtype bfloat16")
     if args.replicas < 1 or args.max_batch_size < 1:
@@ -1834,9 +1959,11 @@ def main():
         print(msg, flush=True)
         output_lines.append(msg)
 
-    backend = (VllmBackend if args.backend == "vllm" else DiffusersBackend)(args, log)
+    backend = {"vllm": VllmBackend, "openvino": OpenVinoBackend}.get(
+        args.backend, DiffusersBackend)(args, log)
     is_vllm = args.backend == "vllm"
-    tag = sweep.precision_tag(args.dtype, args.quant)
+    tag = (dit_openvino.precision_tag(args.dtype, args.ov_weights)
+           if args.backend == "openvino" else sweep.precision_tag(args.dtype, args.quant))
     slug = args.model.replace("/", "_")
     run_name = (f"{backend.file_prefix}_{slug}_{tag}_{args.device}"
                 f"{args.replicas}r_{timestamp}")
@@ -1863,6 +1990,9 @@ def main():
     log(f"Seed       : {args.seed}")
     for line in backend.header():
         log(line)
+    thp = os.environ.get("THP_MEM_ALLOC_ENABLE") == "1"
+    log("Allocator  : " + ("THP_MEM_ALLOC_ENABLE=1 (PyTorch large CPU tensors on "
+                           "transparent huge pages)" if thp else "default"))
     log("Workload   : interactive")
     log(f"Think time : {args.think_time_s:g} s")
     log(f"SLA        : p{args.sla_percentile:g} end-to-end <= {args.sla_s:g} s")

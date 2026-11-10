@@ -22,6 +22,14 @@
 #
 #   BACKEND=vllm nohup bash dit/run_server_dit_sweep.sh > /dev/null 2>&1 &
 #
+# BACKEND=openvino runs only the CPU cells, with OpenVINO-compiled pipelines
+# (dit/dit_openvino.py) from ov_env, filed as server_dit_ov_*. OV_WEIGHTS=int8
+# for the int8 weight-only export. Models optimum-intel has no OpenVINO
+# pipeline for (PixArt-Sigma) are skipped. THP=1 adds --thp-alloc to the
+# diffusers CPU cells (see server_dit_benchmark.py, MEMORY ALLOCATOR).
+#
+#   BACKEND=openvino RUN_CODE=ov-v1 nohup bash dit/run_server_dit_sweep.sh > /dev/null 2>&1 &
+#
 # Resumable: a cell is skipped when a finished result file for the same model,
 # precision, device, replica count and batch size already exists. Delete that
 # file (or set FORCE=1) to rerun it.
@@ -41,6 +49,8 @@ if ! flock -n 9; then
 fi
 
 PY=cv_env/bin/python
+OV_WEIGHTS="${OV_WEIGHTS:-fp16}"
+THP="${THP:-0}"
 # Socket sizes, core ranges and the results tree come from the machine.
 source common/host.sh
 OUT_DIR="$HOST_OUTPUT_ROOT/server_dit_output"
@@ -57,11 +67,17 @@ if [[ -n $RUN_CODE && ! $RUN_CODE =~ ^[A-Za-z0-9._-]+$ ]]; then
   exit 1
 fi
 BACKEND="${BACKEND:-diffusers}"
+CPU_TAG=bfloat16
+CPU_ARGS=(--quant none --compile)
 case "$BACKEND" in
   diffusers) PREFIX=server_dit ;;
   vllm)      PREFIX=server_dit_vllm ;;
-  *) echo "BACKEND must be diffusers or vllm, got '$BACKEND'" >&2; exit 1 ;;
+  openvino)  PREFIX=server_dit_ov; PY=ov_env/bin/python
+             [[ $OV_WEIGHTS == int8 ]] && CPU_TAG=bfloat16-int8w
+             CPU_ARGS=(--ov-weights "$OV_WEIGHTS") ;;
+  *) echo "BACKEND must be diffusers, vllm or openvino, got '$BACKEND'" >&2; exit 1 ;;
 esac
+[[ $THP == 1 && $BACKEND == diffusers ]] && CPU_ARGS+=(--thp-alloc)
 LOG=server_dit_sweep_${BACKEND}_${RUN_CODE:+${RUN_CODE}_}$(date +%Y%m%d_%H%M%S).log
 # Models vLLM-Omni batches natively; every other model is batch 1 under vLLM.
 VLLM_BATCHING_MODELS=" stabilityai/stable-diffusion-3.5-medium stabilityai/stable-diffusion-3.5-large "
@@ -71,7 +87,9 @@ VLLM_NO_FP8_MODELS="$VLLM_BATCHING_MODELS"
 
 # No --steps: each model runs at its own default (20; Sana-Sprint 4), see
 # MODEL_STEPS in dit/dit_common.py.
-COMMON=(--height 1024 --width 1024 --seed 42 --prompts 1000
+# No --height/--width: each model runs at its native resolution (1024;
+# SDXL-Turbo 512), MODEL_RESOLUTION in dit/dit_common.py.
+COMMON=(--seed 42 --prompts 1000
         --sla-s 30 --sla-percentile 95 --think-time-s 30
         --warmup-requests 10 --calibrate 5 --save-images 2)
 
@@ -126,7 +144,10 @@ cell() {
 }
 
 # ---- 1 socket + 1 GPU --------------------------------------------------------
-if (( HOST_GPUS == 0 )); then
+if [[ $BACKEND == openvino ]]; then
+  log "--- skip: GPU cells (OpenVINO's GPU plugin drives Intel GPUs, not NVIDIA)"
+  GPU_MODELS=()
+elif (( HOST_GPUS == 0 )); then
   log "--- skip: GPU cells (no NVIDIA GPU found)"
   GPU_MODELS=()
 fi
@@ -153,19 +174,30 @@ if [[ $BACKEND == vllm ]]; then
   log ""
   log "--- skip: CPU cells (vLLM-Omni has no CPU platform)"
   CPU_MODELS=()
+elif [[ $BACKEND == openvino ]]; then
+  # No OpenVINO pipeline for PixArt-Sigma in optimum-intel.
+  OV_MODELS=()
+  for m in "${CPU_MODELS[@]}"; do
+    if [[ $m == PixArt-alpha/* ]]; then
+      log "--- skip: $m (no OpenVINO pipeline in optimum-intel)"
+    else
+      OV_MODELS+=("$m")
+    fi
+  done
+  CPU_MODELS=("${OV_MODELS[@]}")
 fi
 
 # ---- CPU, one socket ---------------------------------------------------------
 for m in "${CPU_MODELS[@]}"; do
-  cell "$m" bfloat16 cpu 1 1 -- \
-    --cpu-cores "${HOST_SOCKET_RANGES[0]}" --dtype bfloat16 --quant none --compile --requests 30
+  cell "$m" "$CPU_TAG" cpu 1 1 -- \
+    --cpu-cores "${HOST_SOCKET_RANGES[0]}" --dtype bfloat16 "${CPU_ARGS[@]}" --requests 30
 done
 
 # ---- CPU, every socket (one replica per socket, shared queue) ----------------
 (( HOST_SOCKETS > 1 )) || CPU_MODELS=()
 for m in "${CPU_MODELS[@]}"; do
-  cell "$m" bfloat16 cpu "$HOST_SOCKETS" 1 -- \
-    --cpu-cores "${HOST_SOCKET_RANGES[@]}" --dtype bfloat16 --quant none --compile --requests 30
+  cell "$m" "$CPU_TAG" cpu "$HOST_SOCKETS" 1 -- \
+    --cpu-cores "${HOST_SOCKET_RANGES[@]}" --dtype bfloat16 "${CPU_ARGS[@]}" --requests 30
 done
 
 log ""

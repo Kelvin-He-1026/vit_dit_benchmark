@@ -18,6 +18,15 @@ MODELS = [
     # A UNet, not a DiT - kept as the pre-DiT reference point. Its denoiser is
     # pipe.unet rather than pipe.transformer; see denoiser() below.
     "stabilityai/stable-diffusion-xl-base-1.0",
+    # Few-step distilled models, added for the CPU / OpenVINO sweep: step
+    # count matters more than parameter count there. Each runs at its model
+    # card's settings (MODEL_STEPS, MODEL_GUIDANCE, MODEL_RESOLUTION below).
+    # SDXL-Turbo: UNet, 512 px, SAI non-commercial community licence.
+    "stabilityai/sdxl-turbo",
+    # FLUX.2 [klein] 4B, step-distilled, Apache 2.0.
+    "black-forest-labs/FLUX.2-klein-4B",
+    # Z-Image-Turbo, ~6B, Apache 2.0.
+    "Tongyi-MAI/Z-Image-Turbo",
 ]
 
 # Models that need something beyond `pip install -r requirements.txt` before
@@ -35,6 +44,25 @@ DEFAULT_STEPS = 20
 MODEL_STEPS = {
     "Efficient-Large-Model/Sana_Sprint_0.6B_1024px_diffusers": 4,
     "Efficient-Large-Model/Sana_Sprint_1.6B_1024px_diffusers": 4,
+    "stabilityai/sdxl-turbo": 4,             # card: 1-4; 4 is the best quality
+    "black-forest-labs/FLUX.2-klein-4B": 4,  # card: 4
+    "Tongyi-MAI/Z-Image-Turbo": 9,           # card: 9 (= 8 transformer passes)
+}
+
+# Guidance the distilled models are trained for. Every pipeline's own default
+# is a CFG value (4.0-7.0), which for these either doubles the transformer
+# work for nothing or degrades the image, so it is passed explicitly.
+MODEL_GUIDANCE = {
+    "stabilityai/sdxl-turbo": 0.0,
+    "black-forest-labs/FLUX.2-klein-4B": 1.0,
+    "Tongyi-MAI/Z-Image-Turbo": 0.0,
+}
+
+# Native resolution when --height/--width are not given. SDXL-Turbo is
+# trained at 512 px; its numbers are not comparable with the 1024 px models.
+DEFAULT_RESOLUTION = 1024
+MODEL_RESOLUTION = {
+    "stabilityai/sdxl-turbo": 512,
 }
 
 UNSUPPORTED = {
@@ -55,8 +83,16 @@ def steps_for(model, requested=None):
     return requested if requested is not None else MODEL_STEPS.get(model, DEFAULT_STEPS)
 
 
+def resolution_for(model, height=None, width=None):
+    """(height, width): the ones given, else the model's native resolution."""
+    native = MODEL_RESOLUTION.get(model, DEFAULT_RESOLUTION)
+    return (height or native, width or native)
+
+
 def step_kwargs(model, steps):
     """Extra pipeline-call kwargs a model needs at this step count.
+
+    The distilled models' guidance_scale (MODEL_GUIDANCE), and:
 
     SanaSprintPipeline defaults intermediate_timesteps=1.3, which is only
     defined for its 2-step schedule; at any other count it raises
@@ -66,9 +102,12 @@ def step_kwargs(model, steps):
 
     so every other count, the default of 4 included, has to clear it.
     """
-    if model in MODEL_STEPS and steps != 2:
-        return {"intermediate_timesteps": None}
-    return {}
+    out = {}
+    if model in MODEL_GUIDANCE:
+        out["guidance_scale"] = MODEL_GUIDANCE[model]
+    if "Sana_Sprint" in model and steps != 2:
+        out["intermediate_timesteps"] = None
+    return out
 
 
 def denoiser(pipe):

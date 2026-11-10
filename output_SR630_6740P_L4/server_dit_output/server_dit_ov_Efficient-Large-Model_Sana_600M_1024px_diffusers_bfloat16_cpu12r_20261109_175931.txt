@@ -1,0 +1,162 @@
+Timestamp  : 20261109_175931
+Run code   : ov-layout
+Script     : server_dit_ov
+Backend    : openvino
+Model      : Efficient-Large-Model/Sana_600M_1024px_diffusers
+Dataset    : byliutao/coco2014val_10k (prompts)
+Device     : cpu
+Server     : ThinkSystem SR630 V4
+CPU        : Intel(R) Xeon(R) 6740P
+CPU cores  : 96 logical, 96 physical, 2 sockets
+GPU        : NVIDIA L4 x2
+Dtype      : bfloat16
+Resolution : 1024x1024
+Steps      : 20
+Seed       : 42
+OpenVINO   : openvino 2026.4.1, optimum-intel 2.2.0 (CPU plugin, fp16 weights, inference precision bf16, dynamic shapes, 1 stream per replica, pinned)
+OV weights : fp16
+Quant      : disabled
+Replicas   : 12
+Devices    : cpu
+CPU bind   : 0-47,48-95
+Threads    : 8
+Batch size : 1 (max)
+Batch wait : 0 ms
+Allocator  : default
+Workload   : interactive
+Think time : 30 s
+SLA        : p95 end-to-end <= 30 s
+Drop after : 2x SLA queued (60 s)
+Requests   : 30 scored + 10 warmup per level
+Calibrate  : 5 generations per replica
+Early stop : enabled
+OV model   : /home/lhe4/vit_dit_first_cut/models/openvino/Efficient-Large-Model_Sana_600M_1024px_diffusers/fp16
+Compile    : disabled (OpenVINO compiles the graph itself; torch.compile does not apply)
+  replica 0: cpu, 8 OpenVINO threads, 1 stream, bf16, pinning True, 8 cores visible
+  replica 1: cpu, 8 OpenVINO threads, 1 stream, bf16, pinning True, 8 cores visible
+  replica 2: cpu, 8 OpenVINO threads, 1 stream, bf16, pinning True, 8 cores visible
+  replica 3: cpu, 8 OpenVINO threads, 1 stream, bf16, pinning True, 8 cores visible
+  replica 4: cpu, 8 OpenVINO threads, 1 stream, bf16, pinning True, 8 cores visible
+  replica 5: cpu, 8 OpenVINO threads, 1 stream, bf16, pinning True, 8 cores visible
+  replica 6: cpu, 8 OpenVINO threads, 1 stream, bf16, pinning True, 8 cores visible
+  replica 7: cpu, 8 OpenVINO threads, 1 stream, bf16, pinning True, 8 cores visible
+  replica 8: cpu, 8 OpenVINO threads, 1 stream, bf16, pinning True, 8 cores visible
+  replica 9: cpu, 8 OpenVINO threads, 1 stream, bf16, pinning True, 8 cores visible
+  replica 10: cpu, 8 OpenVINO threads, 1 stream, bf16, pinning True, 8 cores visible
+  replica 11: cpu, 8 OpenVINO threads, 1 stream, bf16, pinning True, 8 cores visible
+  replica 0: warmed batch 1..1 in 21 s
+  replica 1: warmed batch 1..1 in 20 s
+  replica 2: warmed batch 1..1 in 20 s
+  replica 3: warmed batch 1..1 in 20 s
+  replica 4: warmed batch 1..1 in 20 s
+  replica 5: warmed batch 1..1 in 20 s
+  replica 6: warmed batch 1..1 in 20 s
+  replica 7: warmed batch 1..1 in 19 s
+  replica 8: warmed batch 1..1 in 19 s
+  replica 9: warmed batch 1..1 in 20 s
+  replica 10: warmed batch 1..1 in 20 s
+  replica 11: warmed batch 1..1 in 19 s
+
+=== CALIBRATION (batch 1, sequential, per replica) ===
+  replica 0: service mean 19.372 s  text 0.969  denoise 15.416  decode 2.983  jpeg 0.004
+  replica 1: service mean 18.878 s  text 1.049  denoise 14.691  decode 3.134  jpeg 0.004
+  replica 2: service mean 19.096 s  text 1.091  denoise 14.869  decode 3.131  jpeg 0.004
+  replica 3: service mean 19.013 s  text 1.005  denoise 14.942  decode 3.061  jpeg 0.004
+  replica 4: service mean 18.992 s  text 1.028  denoise 14.872  decode 3.087  jpeg 0.004
+  replica 5: service mean 18.962 s  text 0.978  denoise 14.941  decode 3.038  jpeg 0.004
+  replica 6: service mean 18.492 s  text 1.006  denoise 14.411  decode 3.069  jpeg 0.004
+  replica 7: service mean 18.166 s  text 1.014  denoise 14.136  decode 3.012  jpeg 0.003
+  replica 8: service mean 18.235 s  text 1.030  denoise 14.163  decode 3.037  jpeg 0.004
+  replica 9: service mean 18.466 s  text 0.945  denoise 14.479  decode 3.038  jpeg 0.004
+  replica 10: service mean 18.358 s  text 0.970  denoise 14.363  decode 3.021  jpeg 0.004
+  replica 11: service mean 18.254 s  text 1.044  denoise 14.202  decode 3.003  jpeg 0.004
+  service_mean_s      : 18.691
+  service_p95_s       : 19.327
+  service_cv2         : 0.0005
+  mu_rps              : 0.6420  (38.52 req/min, batch 1, all replicas)
+  images saved to     : /home/lhe4/vit_dit_first_cut/output_SR630_6740P_L4/server_dit_output/server_dit_ov_Efficient-Large-Model_Sana_600M_1024px_diffusers_bfloat16_cpu12r_20261109_175931_images
+Resource monitor: RAPL counters unreadable, CPU power disabled
+Monitor    : host=psutil device=off cpu_power=off every 1000 ms
+
+=== SWEEP ===
+->   19.261 req/min  rho= 0.50  40 arrivals, ~2 min unless stopped early
+   p50=  17.37  p95=  18.15  p99=  18.40 s  ok=30/30  drop=0  batch=1.00  thr=16.49 img/min  cap=41.57/min  PASS  ok
+->   26.965 req/min  rho= 0.70  40 arrivals, ~1 min unless stopped early
+   p50=  17.65  p95=  20.64  p99=  21.42 s  ok=30/30  drop=0  batch=1.00  thr=21.78 img/min  cap=41.00/min  PASS  ok
+->   32.744 req/min  rho= 0.85  40 arrivals, ~1 min unless stopped early
+   p50=  19.63  p95=  24.50  p99=  25.71 s  ok=30/30  drop=0  batch=1.00  thr=25.26 img/min  cap=40.24/min  PASS  ok
+->   38.522 req/min  rho= 1.00  40 arrivals, ~1 min unless stopped early
+   p50=  24.04  p95=  27.05  p99=  27.42 s  ok=30/30  drop=0  batch=1.00  thr=28.20 img/min  cap=39.59/min  FAIL  no steady state under SLA: queue would settle at mean 43.3 s at rho 0.97
+->   35.516 req/min  rho= 0.92  40 arrivals, ~1 min unless stopped early
+   p50=  22.18  p95=  25.00  p99=  25.81 s  ok=30/30  drop=0  batch=1.00  thr=26.78 img/min  cap=39.97/min  PASS  ok
+->   36.988 req/min  rho= 0.96  40 arrivals, ~1 min unless stopped early
+   p50=  23.20  p95=  25.61  p99=  26.36 s  ok=30/30  drop=0  batch=1.00  thr=27.74 img/min  cap=39.63/min  PASS  ok
+
+=== RESULT ===
+sla_seconds             : 30
+sla_percentile          : 95
+workload                : interactive
+calibrated_mu_rps       : 0.64203
+calibrated_service_s    : 18.6906
+replica_rss_gib_max     : 13.02
+max_qps                 : 0.61647
+max_requests_per_minute : 36.988
+max_images_per_hour     : 2219.3
+rho_at_capacity         : 0.960
+service_capacity_rpm    : 39.634
+rho_measured            : 0.933
+steady_state_mean_ms    : 26680.8
+max_concurrent_inflight : 13.66
+think_time_s            : 30
+max_concurrent_users    : 32.2
+images_per_second       : 0.46228
+goodput_rps             : 0.46228
+sla_attainment_pct      : 100.0
+
+users by think time (Little's Law, same measurement):
+  think_time=  0.0s        :       13.7 users
+  think_time= 15.0s        :       22.9 users
+  think_time= 30.0s        :       32.2 users
+  think_time= 60.0s        :       50.7 users
+
+at the winning level:
+  requests_measured     : 30
+  dropped               : 0
+  p50_ms                : 23197.6
+  p90_ms                : 25567.9
+  p95_ms                : 25613.4
+  p99_ms                : 26364.7
+  max_ms                : 26670.3
+  avg_ms_per_image      : 22165.9
+  predicted_mean_ms     : 35249.6
+  mean_batch_size       : 1.00
+  queue_depth_max       : 6
+  p95_drift             : x0.964
+
+  where the budget goes:
+    harness_lag_ms      : 1.9
+    queue_wait_ms       : 7134.2
+    inference_ms        : 18961.6
+    ipc_ms              : 0.8
+    text_encode_ms      : 920.7
+    denoise_ms          : 14382.1
+    vae_decode_ms       : 2858.6
+    jpeg_encode_ms      : 3.7
+    (queue/inference/ipc/lag are p95; the four stages are means)
+
+  resources (65 samples over the window):
+    sys_cores_busy_mean : 82.17
+    sys_cores_busy_max  : 96.00
+    sys_cpu_pct_mean    : 85.6
+    rss_gib_max         : 0.57
+    total_rss_gib_max   : 156.35
+    power_source        : none
+
+=== LADDER ===
+  req/min   rho   p50 s   p95 s   p99 s  mean s  pred s  img/min attain% drop batch qmax  cores  gpu%      W  verdict
+   19.261  0.50   17.37   18.15   18.40   17.32   18.73    16.49   100.0    0  1.00    0   43.8     -      -  PASS ok
+   26.965  0.70   17.65   20.64   21.42   18.06   19.17    21.78   100.0    0  1.00    2   60.7     -      -  PASS ok
+   32.744  0.85   19.63   24.50   25.71   20.12   21.25    25.26   100.0    0  1.00    6   73.6     -      -  PASS ok
+   35.516  0.92   22.18   25.00   25.81   21.40   25.79    26.78   100.0    0  1.00    6   79.2     -      -  PASS ok
+   36.988  0.96   23.20   25.61   26.36   22.17   35.25    27.74   100.0    0  1.00    6   82.2     -      -  PASS ok
+   38.522  1.00   24.04   27.05   27.42   23.08     inf    28.20   100.0    0  1.00    6   84.3     -      -  FAIL no steady state under SLA: queue would settle at mean 43.3 s at rho 0.97

@@ -41,6 +41,18 @@
 # A layout whose calibrated service time already exceeds the SLA costs only the
 # load and calibration; the harness skips its ladder.
 #
+# BACKEND=openvino runs the same grid with the OpenVINO-compiled pipelines
+# (dit/dit_openvino.py), from ov_env, filed as server_dit_ov_*. OV_WEIGHTS=int8
+# selects the int8 weight-only export (default fp16). No --compile there:
+# OpenVINO compiles the graph itself.
+#
+#   BACKEND=openvino RUN_CODE=ov-layout nohup bash dit/run_server_dit_layout_sweep.sh > /dev/null 2>&1 &
+#
+# THP=1 adds --thp-alloc (PyTorch's large CPU tensors on transparent huge
+# pages; about 2x faster for diffusers at 1024 px, see server_dit_benchmark.py).
+# It is logged per result as "Allocator", but give the sweep its own RUN_CODE
+# too: a cell counts as done by run code, not by allocator.
+#
 # Shares run_server_dit_sweep.sh's lock, so the two cannot overlap. It does not
 # know about the ViT sweep: check that is idle before starting.
 #
@@ -51,7 +63,25 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 export TZ=America/New_York
 
-PY=cv_env/bin/python
+BACKEND="${BACKEND:-diffusers}"
+OV_WEIGHTS="${OV_WEIGHTS:-fp16}"
+THP="${THP:-0}"
+case "$BACKEND" in
+  diffusers) PY=cv_env/bin/python; PREFIX=server_dit
+             TAG=bfloat16; BACKEND_ARGS=(--backend diffusers --quant none --compile) ;;
+  openvino)  PY=ov_env/bin/python; PREFIX=server_dit_ov
+             case "$OV_WEIGHTS" in
+               fp16) TAG=bfloat16 ;;
+               int8) TAG=bfloat16-int8w ;;
+               *) echo "OV_WEIGHTS must be fp16 or int8, got '$OV_WEIGHTS'" >&2; exit 1 ;;
+             esac
+             BACKEND_ARGS=(--backend openvino --ov-weights "$OV_WEIGHTS") ;;
+  *) echo "BACKEND must be diffusers or openvino, got '$BACKEND'" >&2; exit 1 ;;
+esac
+[[ $THP == 1 ]] && BACKEND_ARGS+=(--thp-alloc)
+BACKEND_DESC=$BACKEND
+[[ $BACKEND == openvino ]] && BACKEND_DESC+=" ($OV_WEIGHTS weights)"
+[[ $THP == 1 ]] && BACKEND_DESC+=", THP alloc"
 # Socket sizes, core ranges and the results tree come from the machine.
 source common/host.sh
 OUT_DIR="$HOST_OUTPUT_ROOT/server_dit_output"
@@ -81,7 +111,9 @@ LOG=server_dit_layout_sweep_${RUN_CODE}_$(date +%Y%m%d_%H%M%S).log
 STATUS=server_dit_layout_sweep.status
 [[ $DRY_RUN == 1 ]] && LOG=/dev/null && STATUS=/dev/null
 
-COMMON=(--height 1024 --width 1024 --seed 42 --prompts 1000
+# No --height/--width: each model runs at its native resolution (1024;
+# SDXL-Turbo 512), MODEL_RESOLUTION in dit/dit_common.py.
+COMMON=(--seed 42 --prompts 1000
         --sla-s "$SLA_S" --sla-percentile 95 --think-time-s 30
         --warmup-requests 10 --calibrate 5 --save-images 2)
 
@@ -99,7 +131,9 @@ if [[ -z ${LAYOUTS:-} ]]; then
 fi
 # Batch 2 only where threads are plentiful: that is where one image may leave
 # them idle, and where two service times still fit inside the SLA.
+# NO_BATCH2=1 skips them (on the OpenVINO grid batch 2 never beat batch 1).
 BATCHED=$(cut -d, -f1-2 <<< "$LAYOUTS")
+[[ ${NO_BATCH2:-0} == 1 ]] && BATCHED=
 
 # model | batch-1 layouts | layouts that also run at batch 2
 SPECS=(
@@ -137,7 +171,7 @@ layout() {
 done_already() {
   local slug=${1//\//_} f
   [[ "$FORCE" == 1 ]] && return 1
-  for f in "$OUT_DIR"/server_dit_"${slug}"_bfloat16_cpu"$2"r_*.txt; do
+  for f in "$OUT_DIR"/"${PREFIX}"_"${slug}"_"${TAG}"_cpu"$2"r_*.txt; do
     [[ -f "$f" ]] || continue
     grep -q "^Run code   : $RUN_CODE\$" "$f" || continue
     grep -q "^Threads    : $3\$" "$f" || continue
@@ -160,9 +194,9 @@ cell() {
   fi
   # shellcheck disable=SC2086  # CELL_CORES is two words on purpose
   local cmd=($PY -m dit.server_dit_benchmark "${COMMON[@]}" --run-code "$RUN_CODE"
-             --backend diffusers --model "$model" --device cpu
+             "${BACKEND_ARGS[@]}" --model "$model" --device cpu
              --replicas "$replicas" --threads "$threads" --cpu-cores $CELL_CORES
-             --max-batch-size "$bs" --dtype bfloat16 --quant none --compile
+             --max-batch-size "$bs" --dtype bfloat16
              --requests "$REQUESTS")
   if [[ $DRY_RUN == 1 ]]; then
     echo "${cmd[*]}"
@@ -174,7 +208,8 @@ cell() {
     "    run code  : $RUN_CODE"
     "    model     : $model"
     "    replicas  : $replicas x $threads threads, pinned to $CELL_CORES"
-    "    fixed     : cpu bfloat16, quant none, compiled, max batch $bs, batch wait 0 ms"
+    "    backend   : $BACKEND_DESC"
+    "    fixed     : cpu bfloat16, max batch $bs, batch wait 0 ms (${BACKEND_ARGS[*]})"
     "    SLA       : p95 <= $SLA_S s, $REQUESTS scored requests per level"
     "    log       : $LOG"
   )
@@ -185,7 +220,7 @@ cell() {
     log "=== $(date '+%F %T') done $pos:  $name (run code $RUN_CODE, $(( (SECONDS - t0) / 60 )) min)"
     # Capacity and RAM in one place. total_rss is only logged when a level
     # passed; replica_rss (the largest single replica) is always there.
-    result=$(ls -t "$OUT_DIR"/server_dit_"${slug}"_bfloat16_cpu"${replicas}"r_*.txt 2>/dev/null | head -1)
+    result=$(ls -t "$OUT_DIR"/"${PREFIX}"_"${slug}"_"${TAG}"_cpu"${replicas}"r_*.txt 2>/dev/null | head -1)
     if [[ -n $result ]]; then
       log "    result    : $result"
       grep -E '^ *(max_requests_per_minute|calibrated_service_s|replica_rss_gib_max|total_rss_gib_max) *:' "$result" \

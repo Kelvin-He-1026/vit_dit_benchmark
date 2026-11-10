@@ -21,6 +21,16 @@ python -m venv vllm_env
 ./vllm_env/bin/pip install -U -r requirements-vllm.txt
 ```
 
+OpenVINO DiT harness (`dit/dit_openvino.py` and `--backend openvino` in the DiT
+scripts) only. Its own environment because optimum-intel's nncf caps numpy
+below cv_env's 2.5.2; everything else is pinned to cv_env's versions:
+
+```bash
+python3.12 -m venv ov_env
+./ov_env/bin/pip install torch==2.13.0 torchvision==0.28.0 --index-url https://download.pytorch.org/whl/cpu
+./ov_env/bin/pip install -r requirements-openvino.txt
+```
+
 ## Running on another machine
 
 Nothing in the code names a server, CPU or GPU. Clone, create the
@@ -82,6 +92,9 @@ dit/                         DiT text-to-image; imports common/ only
   server_dit_benchmark.py    serving capacity under a latency SLA
   run_server_dit_sweep.sh    the full server_dit matrix, resumable
   run_server_dit_layout_sweep.sh  CPU replicas x threads x batch, resumable
+  dit_openvino.py            OpenVINO export / load / check of a DiT pipeline
+  run_ov_comparison.sh       OpenVINO bf16 CPU layout grid (Sana family)
+  run_ov_model_search.sh     probe layouts, then SLA-sweep the best (new models)
 consolidate_results.py reads every result file, writes the CSVs
 ```
 
@@ -350,6 +363,86 @@ BACKEND=vllm nohup bash dit/run_server_dit_sweep.sh > /dev/null 2>&1 &
 SD3.5-large is GPU-only; if it does not fit resident it falls back to model CPU
 offload and the result's `GPU placement` line says so. A CPU level at the
 default 100 scored requests takes 15-30 min, so expect 1-2 h per CPU cell.
+
+#### OpenVINO backend
+
+`--backend openvino` runs the same replicas, queue, ladder and per-stage split
+as the diffusers backend, but each replica loads the pipeline exported to
+OpenVINO and compiled by its CPU plugin for that replica's cores and
+`--threads`. The OpenVINO pipeline is a subclass of the diffusers one, so the
+scheduler, the seeded latents and the step callback are the same code; only
+the text encoder, transformer and VAE run in OpenVINO. Run it from `ov_env`.
+Results are filed as `server_dit_ov_*` (and `dit_throughput_ov_*`) with
+`backend=openvino` in both CSVs.
+
+```bash
+# export once (also done on first use); --verify compares against PyTorch
+ov_env/bin/python -m dit.dit_openvino --model Efficient-Large-Model/Sana_Sprint_0.6B_1024px_diffusers \
+    --weights fp16 int8 --verify
+# serving capacity, same layout as a diffusers cell
+ov_env/bin/python -m dit.server_dit_benchmark --backend openvino \
+    --model Efficient-Large-Model/Sana_Sprint_0.6B_1024px_diffusers \
+    --device cpu --replicas 8 --threads 12 --cpu-cores 0-47 48-95
+# offline throughput
+ov_env/bin/python -m dit.dit_benchmark --throughput --backend openvino --device cpu \
+    --models Efficient-Large-Model/Sana_Sprint_0.6B_1024px_diffusers --precisions bf16 \
+    --replicas 2 --cpu-cores 0-47 --batch-sizes 1
+# the CPU layout grid, resumable
+BACKEND=openvino RUN_CODE=ov-layout nohup bash dit/run_server_dit_layout_sweep.sh > /dev/null 2>&1 &
+```
+
+- CPU only. OpenVINO's GPU plugin drives Intel GPUs, not the NVIDIA cards.
+- Models: whatever optimum-intel has an OpenVINO pipeline for - Sana,
+  Sana-Sprint, SD3/SD3.5, SDXL. **PixArt-Sigma has none** and is refused.
+- `--ov-weights fp16` (default) or `int8` (NNCF weight-only, every component).
+  Exports live in `models/openvino/<org>_<name>/<fp16|int8>/`. No `--compile`
+  or `--quant`: OpenVINO compiles the graph itself.
+- `--verify` writes PyTorch/OpenVINO pairs (same prompt, same seed) and their
+  PSNR to `<results>/dit_openvino_verify/`. The 4-step Sana-Sprint models
+  match at 26-33 dB. The 20-step guided models drift to a different but
+  equally valid image (14-22 dB), so look at the pairs rather than the number.
+- Dynamic shapes. optimum-intel's static `reshape()` assumes a guidance-doubled
+  transformer batch, which breaks Sana-Sprint on its first step.
+
+Few-step models for the CPU sweep, each at its model card's settings
+(`MODEL_STEPS`, `MODEL_GUIDANCE`, `MODEL_RESOLUTION` in `dit/dit_common.py`):
+
+| Model | Resolution | Steps | Guidance | Licence |
+|---|---|---|---|---|
+| `stabilityai/sdxl-turbo` | 512 | 4 | 0 | SAI non-commercial community |
+| `black-forest-labs/FLUX.2-klein-4B` | 1024 | 4 | 1.0 | Apache 2.0 |
+| `Tongyi-MAI/Z-Image-Turbo` | 1024 | 9 | 0 | Apache 2.0 |
+
+`--height/--width` now default to the model's native resolution (1024
+everywhere except SDXL-Turbo), and the sweep scripts no longer force 1024.
+
+`dit/run_ov_model_search.sh` finds a new model's layout without running the
+full SLA grid: an offline-throughput probe at every layout that fills both
+sockets (2x48 ... 12x8, ~2 min each), then the p95-SLA sweep on only the two
+best layouts whose per-image service time is at most half the SLA.
+
+```bash
+nohup bash dit/run_ov_model_search.sh > /dev/null 2>&1 &          # default four models
+MODELS="stabilityai/sdxl-turbo" bash dit/run_ov_model_search.sh     # a subset
+```
+
+#### PyTorch CPU allocator (`--thp-alloc`)
+
+The diffusers CPU numbers are allocator-bound. PyTorch hands every large CPU
+tensor to the kernel, so a 1024 px VAE decode maps and zero-fills hundreds of
+MB per call: Sana-Sprint 0.6B on one socket spent a third of its CPU time in
+the kernel on 42 M page faults. `--thp-alloc` (sweep scripts: `THP=1`) sets
+`THP_MEM_ALLOC_ENABLE=1` so those tensors land on transparent huge pages:
+
+| Sana-Sprint 0.6B, 1 socket, 1024 px | s/image | VAE decode |
+|---|---|---|
+| diffusers, compiled, default allocator | 4.6 | 3.4 s |
+| diffusers, compiled, `--thp-alloc` | 1.9 | 1.0 s |
+| OpenVINO fp16, bf16 | 1.1 | 0.5 s |
+
+Every result logs an `Allocator` line (CSV column `allocator`). Diffusers CPU
+results filed before this option existed ran on the default allocator - roughly
+2x slow - so compare OpenVINO against a `--thp-alloc` diffusers run, not those.
 
 ## Consolidated output
 

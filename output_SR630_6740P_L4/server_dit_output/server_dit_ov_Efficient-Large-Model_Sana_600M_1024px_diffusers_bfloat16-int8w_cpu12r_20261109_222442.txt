@@ -1,0 +1,159 @@
+Timestamp  : 20261109_222442
+Run code   : ov-layout-int8
+Script     : server_dit_ov
+Backend    : openvino
+Model      : Efficient-Large-Model/Sana_600M_1024px_diffusers
+Dataset    : byliutao/coco2014val_10k (prompts)
+Device     : cpu
+Server     : ThinkSystem SR630 V4
+CPU        : Intel(R) Xeon(R) 6740P
+CPU cores  : 96 logical, 96 physical, 2 sockets
+GPU        : NVIDIA L4 x2
+Dtype      : bfloat16
+Resolution : 1024x1024
+Steps      : 20
+Seed       : 42
+OpenVINO   : openvino 2026.4.1, optimum-intel 2.2.0 (CPU plugin, int8 weight-only compression (NNCF), every component, inference precision bf16, dynamic shapes, 1 stream per replica, pinned)
+OV weights : int8
+Quant      : int8 weight-only (OpenVINO/NNCF INT8_ASYM, every component; activations at --dtype)
+Replicas   : 12
+Devices    : cpu
+CPU bind   : 0-47,48-95
+Threads    : 8
+Batch size : 1 (max)
+Batch wait : 0 ms
+Allocator  : default
+Workload   : interactive
+Think time : 30 s
+SLA        : p95 end-to-end <= 30 s
+Drop after : 2x SLA queued (60 s)
+Requests   : 30 scored + 10 warmup per level
+Calibrate  : 5 generations per replica
+Early stop : enabled
+OV model   : /home/lhe4/vit_dit_first_cut/models/openvino/Efficient-Large-Model_Sana_600M_1024px_diffusers/int8
+Compile    : disabled (OpenVINO compiles the graph itself; torch.compile does not apply)
+  replica 0: cpu, 8 OpenVINO threads, 1 stream, bf16, pinning True, 8 cores visible
+  replica 1: cpu, 8 OpenVINO threads, 1 stream, bf16, pinning True, 8 cores visible
+  replica 2: cpu, 8 OpenVINO threads, 1 stream, bf16, pinning True, 8 cores visible
+  replica 3: cpu, 8 OpenVINO threads, 1 stream, bf16, pinning True, 8 cores visible
+  replica 4: cpu, 8 OpenVINO threads, 1 stream, bf16, pinning True, 8 cores visible
+  replica 5: cpu, 8 OpenVINO threads, 1 stream, bf16, pinning True, 8 cores visible
+  replica 6: cpu, 8 OpenVINO threads, 1 stream, bf16, pinning True, 8 cores visible
+  replica 7: cpu, 8 OpenVINO threads, 1 stream, bf16, pinning True, 8 cores visible
+  replica 8: cpu, 8 OpenVINO threads, 1 stream, bf16, pinning True, 8 cores visible
+  replica 9: cpu, 8 OpenVINO threads, 1 stream, bf16, pinning True, 8 cores visible
+  replica 10: cpu, 8 OpenVINO threads, 1 stream, bf16, pinning True, 8 cores visible
+  replica 11: cpu, 8 OpenVINO threads, 1 stream, bf16, pinning True, 8 cores visible
+  replica 0: warmed batch 1..1 in 25 s
+  replica 1: warmed batch 1..1 in 25 s
+  replica 2: warmed batch 1..1 in 25 s
+  replica 3: warmed batch 1..1 in 25 s
+  replica 4: warmed batch 1..1 in 25 s
+  replica 5: warmed batch 1..1 in 25 s
+  replica 6: warmed batch 1..1 in 24 s
+  replica 7: warmed batch 1..1 in 24 s
+  replica 8: warmed batch 1..1 in 24 s
+  replica 9: warmed batch 1..1 in 25 s
+  replica 10: warmed batch 1..1 in 25 s
+  replica 11: warmed batch 1..1 in 24 s
+
+=== CALIBRATION (batch 1, sequential, per replica) ===
+  replica 0: service mean 23.861 s  text 1.332  denoise 19.489  decode 3.036  jpeg 0.004
+  replica 1: service mean 23.176 s  text 1.367  denoise 18.852  decode 2.954  jpeg 0.004
+  replica 2: service mean 23.591 s  text 1.326  denoise 19.153  decode 3.108  jpeg 0.004
+  replica 3: service mean 23.478 s  text 1.338  denoise 19.085  decode 3.052  jpeg 0.003
+  replica 4: service mean 23.676 s  text 1.326  denoise 19.237  decode 3.110  jpeg 0.004
+  replica 5: service mean 23.580 s  text 1.323  denoise 19.118  decode 3.135  jpeg 0.004
+  replica 6: service mean 22.692 s  text 1.340  denoise 18.429  decode 2.919  jpeg 0.004
+  replica 7: service mean 22.797 s  text 1.332  denoise 18.507  decode 2.954  jpeg 0.003
+  replica 8: service mean 22.658 s  text 1.338  denoise 18.308  decode 3.008  jpeg 0.004
+  replica 9: service mean 23.062 s  text 1.340  denoise 18.715  decode 3.004  jpeg 0.004
+  replica 10: service mean 23.345 s  text 1.308  denoise 19.161  decode 2.873  jpeg 0.003
+  replica 11: service mean 22.882 s  text 1.330  denoise 18.594  decode 2.955  jpeg 0.003
+  service_mean_s      : 23.233
+  service_p95_s       : 23.767
+  service_cv2         : 0.0003
+  mu_rps              : 0.5165  (30.99 req/min, batch 1, all replicas)
+  images saved to     : /home/lhe4/vit_dit_first_cut/output_SR630_6740P_L4/server_dit_output/server_dit_ov_Efficient-Large-Model_Sana_600M_1024px_diffusers_bfloat16-int8w_cpu12r_20261109_222442_images
+Resource monitor: RAPL counters unreadable, CPU power disabled
+Monitor    : host=psutil device=off cpu_power=off every 1000 ms
+
+=== SWEEP ===
+->   15.495 req/min  rho= 0.50  40 arrivals, ~3 min unless stopped early
+   p50=  21.95  p95=  22.82  p99=  23.07 s  ok=30/30  drop=0  batch=1.00  thr=13.18 img/min  cap=32.76/min  PASS  ok
+->   21.693 req/min  rho= 0.70  40 arrivals, ~2 min unless stopped early
+   p50=  22.53  p95=  26.56  p99=  27.85 s  ok=30/30  drop=0  batch=1.00  thr=17.39 img/min  cap=32.23/min  PASS  ok
+->   26.342 req/min  rho= 0.85  40 arrivals, ~2 min unless stopped early
+   p50=  26.73  p95=  31.73  p99=  32.45 s  ok=23/30  drop=0  batch=1.00  thr=20.49 img/min  cap=31.59/min  FAIL  stopped early: 3 scored misses already put p95 over the SLA
+->   23.905 req/min  rho= 0.77  40 arrivals, ~2 min unless stopped early
+   p50=  22.83  p95=  28.40  p99=  29.99 s  ok=30/30  drop=0  batch=1.00  thr=18.69 img/min  cap=31.96/min  PASS  ok
+->   25.093 req/min  rho= 0.81  40 arrivals, ~2 min unless stopped early
+   p50=  23.66  p95=  30.19  p99=  31.45 s  ok=30/30  drop=0  batch=1.00  thr=19.32 img/min  cap=31.83/min  FAIL  p95 30.19 > 30 s
+
+=== RESULT ===
+sla_seconds             : 30
+sla_percentile          : 95
+workload                : interactive
+calibrated_mu_rps       : 0.51650
+calibrated_service_s    : 23.2333
+replica_rss_gib_max     : 8.56
+max_qps                 : 0.39841
+max_requests_per_minute : 23.905
+max_images_per_hour     : 1434.3
+rho_at_capacity         : 0.771
+service_capacity_rpm    : 31.963
+rho_measured            : 0.748
+steady_state_mean_ms    : 23502.6
+max_concurrent_inflight : 9.54
+think_time_s            : 30
+max_concurrent_users    : 21.5
+images_per_second       : 0.31154
+goodput_rps             : 0.30116
+sla_attainment_pct      : 96.7
+
+users by think time (Little's Law, same measurement):
+  think_time=  0.0s        :        9.5 users
+  think_time= 15.0s        :       15.5 users
+  think_time= 30.0s        :       21.5 users
+  think_time= 60.0s        :       33.4 users
+
+at the winning level:
+  requests_measured     : 30
+  dropped               : 0
+  p50_ms                : 22831.3
+  p90_ms                : 27397.0
+  p95_ms                : 28397.7
+  p99_ms                : 29992.5
+  max_ms                : 30331.9
+  avg_ms_per_image      : 23949.1
+  predicted_mean_ms     : 24535.1
+  mean_batch_size       : 1.00
+  queue_depth_max       : 3
+  p95_drift             : x0.771
+
+  where the budget goes:
+    harness_lag_ms      : 2.1
+    queue_wait_ms       : 5638.4
+    inference_ms        : 23481.1
+    ipc_ms              : 0.8
+    text_encode_ms      : 1339.3
+    denoise_ms          : 18443.2
+    vae_decode_ms       : 2739.7
+    jpeg_encode_ms      : 3.5
+    (queue/inference/ipc/lag are p95; the four stages are means)
+
+  resources (96 samples over the window):
+    sys_cores_busy_mean : 68.06
+    sys_cores_busy_max  : 95.90
+    sys_cpu_pct_mean    : 70.9
+    rss_gib_max         : 0.57
+    total_rss_gib_max   : 103.01
+    power_source        : none
+
+=== LADDER ===
+  req/min   rho   p50 s   p95 s   p99 s  mean s  pred s  img/min attain% drop batch qmax  cores  gpu%      W  verdict
+   15.495  0.50   21.95   22.82   23.07   21.98   23.28    13.18   100.0    0  1.00    0   44.3     -      -  PASS ok
+   21.693  0.70   22.53   26.56   27.85   23.07   23.83    17.39   100.0    0  1.00    2   62.2     -      -  PASS ok
+   23.905  0.77   22.83   28.40   29.99   23.95   24.54    18.69    96.7    0  1.00    3   68.1     -      -  PASS ok
+   25.093  0.81   23.66   30.19   31.45   24.71   25.22    19.32    93.3    0  1.00    4   71.2     -      -  FAIL p95 30.19 > 30 s
+   26.342  0.85   26.73   31.73   32.45   26.75   26.42    20.49    87.0    0  1.00    5   80.2     -      -  FAIL stopped early: 3 scored misses already put p95 over the SLA

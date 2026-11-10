@@ -175,8 +175,16 @@ ARG_FIELDS = [
     "calibrate_generations",
     "drop_after_factor",
     "early_stop",
-    # server_dit_benchmark.py --backend vllm only.
+    # Which runtime executed the model: pytorch/openvino (ViT), diffusers/
+    # vllm-omni/openvino (DiT).
     "backend",
+    # server_dit_benchmark.py / dit_benchmark.py --backend openvino only.
+    "ov_runtime",
+    "ov_weights",
+    # PyTorch's CPU allocator mode (DiT harnesses): "default" or the
+    # THP_MEM_ALLOC_ENABLE=1 line. Changes diffusers CPU numbers ~2x.
+    "allocator",
+    # server_dit_benchmark.py --backend vllm only.
     "vllm_pipeline",
     "vllm_extra_args",
     "vllm_command",
@@ -447,6 +455,9 @@ KEY_MAP = {
     # vLLM-Omni implementation"; "command" is the exact `vllm-omni serve` line
     # (logged again on an offload relaunch, and the later one is what ran).
     "Backend": "backend",
+    "OpenVINO": "ov_runtime",
+    "OV weights": "ov_weights",
+    "Allocator": "allocator",
     "pipeline": "vllm_pipeline",
     "vLLM args": "vllm_extra_args",
     "command": "vllm_command",
@@ -563,7 +574,7 @@ GROUP_FIELDS = (
     "resolution", "steps", "warmup", "seed", "threads", "compile_raw",
     "cpu_offload", "batched", "runtime", "diffusion_batch_size", "num_shards",
     "server", "cpu", "gpu", "cpu_sku", "gpu_sku", "workload", "mode",
-    "replicas_raw",
+    "replicas_raw", "backend", "ov_weights", "allocator",
 )
 
 # Figures that describe the whole run rather than one shard's slice of it, so
@@ -677,7 +688,9 @@ def parse_file(path):
     if rec["script"] == "server_dit_vllm":
         rec.setdefault("backend", "vllm-omni")
     elif rec["script"].startswith(("server_dit", "dit")):
-        rec.setdefault("backend", "diffusers")
+        # "openvino" for --backend openvino; every DiT run before the
+        # option existed (and every run without it) is diffusers.
+        rec["backend"] = (rec.get("backend") or "diffusers").split()[0]
     elif rec["script"].startswith(("server_vit", "vit")):
         # The ViT scripts print "Backend : openvino 2026.4.1 (...)" or
         # "pytorch 2.13.0"; the column keeps the runtime's name, so a filter on
@@ -858,9 +871,10 @@ def pool(shards, fields):
 # ---------------------------------------------------------------------------
 
 POINT_FIELDS = [
-    "script", "timestamp", "server", "cpu", "gpu", "model", "device", "dtype",
-    "quant", "precision", "workload", "sla_seconds", "think_time_s", "level",
-    "is_best", "result", "note", "replicas", "batch_size", "offered_rps",
+    "script", "backend", "run_code", "timestamp", "server", "cpu", "gpu",
+    "model", "device", "dtype", "quant", "precision", "allocator", "workload",
+    "sla_seconds", "think_time_s", "level", "is_best", "result", "note",
+    "replicas", "threads", "batch_size", "offered_rps",
     "requests_per_minute", "rho", "requests_measured", "images_per_second",
     "images_per_minute", "avg_ms_per_image", "avg_s_per_image",
     "denoising_steps_per_s", "denoise_pct", "cpu_launch_ms", "gpu_ms",
@@ -948,6 +962,8 @@ def point_context(rec):
         sla_s = fnum(rec, "sla_ms") / 1000.0
     return {
         "script": rec["script"],
+        "backend": rec.get("backend", ""),
+        "run_code": rec.get("run_code", ""),
         "timestamp": rec.get("timestamp", ""),
         "server": rec.get("server", ""),
         "cpu": rec.get("cpu", ""),
@@ -957,6 +973,8 @@ def point_context(rec):
         "dtype": dtype,
         "quant": quant,
         "precision": precision,
+        "allocator": rec.get("allocator", ""),
+        "threads": (rec.get("threads", "").split() or [""])[0],
         "workload": rec.get("workload", ""),
         "sla_seconds": f"{sla_s:g}" if sla_s is not None else "",
         "think_time_s": rec.get("think_time_s", ""),

@@ -6,7 +6,7 @@ Deploy a vision model on an Intel Xeon CPU using OpenVINO Model Server
 The main implementation has just two Python files:
 
 - `convert.py`: download a model and export it into OVMS's model directory.
-- `app.py`: receive an image, preprocess it, call OVMS, and return the result.
+- `app.py`: receive an image, preprocess it, call OVMS, and return JSON or a depth PNG.
 
 OVMS runs from its Docker image; no custom server launcher is required.
 This guide uses one model, one container, and batch size 1. It does not run
@@ -14,7 +14,7 @@ a sweep, load test, or benchmark.
 
 ```text
 Image upload → app.py: decode and preprocess → OVMS: model inference
-             ← JSON: labels or embedding    ← model output
+             ← JSON or depth-map PNG        ← model output
 ```
 
 | Name used below | Source model | Result |
@@ -22,6 +22,8 @@ Image upload → app.py: decode and preprocess → OVMS: model inference
 | `vit` | `google/vit-base-patch16-224` | Top-5 ImageNet classes |
 | `resnet` | `microsoft/resnet-50` | Top-5 ImageNet classes |
 | `dinov2` | `facebook/dinov2-base` | Normalized image embedding |
+| `depth-base` | `depth-anything/Depth-Anything-V2-Base-hf` | Relative-depth PNG |
+| `depth-large` | `depth-anything/Depth-Anything-V2-Large-hf` | Relative-depth PNG |
 
 YOLO11m object detection is a separate, optional example at the end.
 
@@ -60,12 +62,17 @@ from pathlib import Path
 import openvino as ov
 import torch
 from PIL import Image
-from transformers import AutoImageProcessor, AutoModel, AutoModelForImageClassification
+from transformers import (
+    AutoImageProcessor, AutoModel, AutoModelForImageClassification,
+    AutoModelForDepthEstimation,
+)
 
 MODELS = {
     "vit": "google/vit-base-patch16-224",
     "resnet": "microsoft/resnet-50",
     "dinov2": "facebook/dinov2-base",
+    "depth-base": "depth-anything/Depth-Anything-V2-Base-hf",
+    "depth-large": "depth-anything/Depth-Anything-V2-Large-hf",
 }
 name = sys.argv[1] if len(sys.argv) > 1 else "vit"
 source = MODELS[name]
@@ -73,8 +80,20 @@ folder = Path(__file__).resolve().parent / "models" / name
 version = folder / "1"
 version.mkdir(parents=True, exist_ok=True)
 
+task = "depth" if name.startswith("depth-") else (
+    "embedding" if name == "dinov2" else "classification"
+)
 processor = AutoImageProcessor.from_pretrained(source, use_fast=False)
-loader = AutoModel if name == "dinov2" else AutoModelForImageClassification
+if task == "depth":
+    # Match the fixed 518 x 518 input used by this project's depth models.
+    # Save this override so uploads of any aspect ratio use the same shape.
+    processor.keep_aspect_ratio = False
+    processor.size = {"height": 518, "width": 518}
+loader = {
+    "classification": AutoModelForImageClassification,
+    "embedding": AutoModel,
+    "depth": AutoModelForDepthEstimation,
+}[task]
 model = loader.from_pretrained(source).float().eval()
 sample = processor(images=Image.new("RGB", (640, 480)), return_tensors="pt")["pixel_values"]
 
@@ -85,6 +104,7 @@ class Network(torch.nn.Module):
         self.model = model
 
     def forward(self, pixel_values):
+        # First output: logits, last_hidden_state, or predicted_depth.
         return self.model(pixel_values=pixel_values, return_dict=False)[0]
 
 
@@ -99,8 +119,8 @@ ov.save_model(converted, str(version / "model.xml"), compress_to_fp16=False)
 processor.save_pretrained(str(folder))
 (folder / "info.json").write_text(json.dumps({
     "source": source,
-    "task": "embedding" if name == "dinov2" else "classification",
-    "labels": model.config.id2label if name != "dinov2" else {},
+    "task": task,
+    "labels": model.config.id2label if task == "classification" else {},
 }, indent=2), encoding="utf-8")
 print(f"Saved {source} to {folder}")
 ```
@@ -138,7 +158,11 @@ Run from `cv-implementation/`:
 
 ```bash
 export MODEL=vit
+```
 
+Start the selected model:
+
+```bash
 docker run -d --rm --name cv-ovms \
     -p 127.0.0.1:8000:8000 \
     -v "$PWD/models:/models:ro" \
@@ -175,13 +199,14 @@ The numeric version directory and Docker arguments follow the
 Save the following as **`app.py`** in `cv-implementation/`:
 
 ```python
+import io
 import json
 import os
 from pathlib import Path
 
 import numpy as np
 import requests
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import FastAPI, HTTPException, Response, UploadFile
 from PIL import Image, ImageOps, UnidentifiedImageError
 from transformers import AutoImageProcessor
 
@@ -192,15 +217,15 @@ OVMS = "http://127.0.0.1:8000/v2/models/cv/infer"
 app = FastAPI(title="Computer Vision Inference")
 
 
-@app.post("/predict")
+@app.post("/predict", responses={200: {"content": {"image/png": {}}}})
 def predict(file: UploadFile):
     try:
         image = ImageOps.exif_transpose(Image.open(file.file)).convert("RGB")
     except (UnidentifiedImageError, OSError):
         raise HTTPException(status_code=400, detail="Upload a valid image.")
 
-    # Use the original processor for the selected model's resize, crop,
-    # rescale and normalization. Keep its output in FP32; no BF16 round trip.
+    # Load the saved preprocessing settings, including depth's fixed size.
+    # Keep the output in FP32; no BF16 round trip.
     pixels = processor(images=image, return_tensors="np")["pixel_values"]
     pixels = np.asarray(pixels, dtype=np.float32)
     try:
@@ -217,6 +242,19 @@ def predict(file: UploadFile):
 
     result = response.json()["outputs"][0]
     output = np.asarray(result["data"], dtype=np.float32).reshape(result["shape"])
+    if info["task"] == "depth":
+        # Raw predicted_depth has shape (1, 518, 518). Resize the float map
+        # to the uploaded image size, then normalize only for visualization.
+        depth = np.asarray(Image.fromarray(output[0]).resize(
+            image.size, Image.Resampling.BICUBIC
+        ))
+        depth = depth - depth.min()
+        gray = (255 * depth / max(float(depth.max()), 1e-8)).astype(np.uint8)
+        png = io.BytesIO()
+        Image.fromarray(gray).save(png, format="PNG")
+        return Response(content=png.getvalue(), media_type="image/png",
+                        headers={"Content-Disposition": 'inline; filename="depth.png"'})
+
     if info["task"] == "embedding":
         embedding = output[0, 0]  # DINOv2's CLS token, shape (768,).
         embedding = embedding / max(float(np.linalg.norm(embedding)), 1e-12)
@@ -235,8 +273,9 @@ def predict(file: UploadFile):
 This calls OVMS's
 [KServe v2 REST inference API](https://docs.openvino.ai/2026/model-server/ovms_docs_rest_api_kfs.html).
 JSON tensors keep the request code short. Preprocessing runs in the
-application; model inference runs in OVMS; label mapping and softmax run in
-the application. There is no application-level batching or replica routing.
+application; model inference runs in OVMS; label mapping, softmax, embedding
+normalization, or depth visualization runs in the application. There is no
+application-level batching or replica routing.
 
 ## 5. Deploy and use the application
 
@@ -262,7 +301,16 @@ For ViT and ResNet, the JSON response contains the source model name and a
 `predictions` list with five entries: `class_id`, `label`, and softmax `score`.
 DINOv2 returns an `embedding` vector instead; it has no classification head.
 The dot product of two returned, normalized embeddings is their cosine
-similarity.
+similarity. For either depth model, the response is an **`image/png`** depth
+visualization resized to the uploaded image's dimensions (after EXIF
+orientation correction).
+
+Depth Anything V2 Base/Large here predict **relative depth**, not distance in
+meters. The PNG is normalized separately for each image to 8-bit grayscale;
+its brightness represents the model output, and is not a calibrated distance
+scale or a value to compare across images. The raw floating-point map is
+available as `output[0]` before visualization. See the
+[Depth Anything V2 model documentation](https://huggingface.co/docs/transformers/model_doc/depth_anything_v2).
 
 The completed request path is:
 
@@ -272,8 +320,8 @@ User uploads JPEG / PNG
   → the saved model processor creates an FP32 tensor
   → app.py sends the tensor to OVMS
   → OpenVINO executes the model on CPU with BF16 inference requested
-  → app.py converts the output to class labels or an image embedding
-  → the user receives JSON
+  → app.py prepares class labels, an image embedding, or a depth visualization
+  → the user receives JSON or a depth PNG
 ```
 
 ## 6. Use another model or stop the deployment
@@ -291,7 +339,8 @@ For ResNet-50:
 export MODEL=resnet
 ```
 
-Repeat step 3 with this `MODEL`, then start the application:
+Repeat only the `docker run` command in step 3 with `MODEL=resnet`, then start
+the application:
 
 ```bash
 MODEL=resnet .venv/bin/uvicorn app:app --host 0.0.0.0 --port 7860
@@ -300,6 +349,32 @@ MODEL=resnet .venv/bin/uvicorn app:app --host 0.0.0.0 --port 7860
 For DINOv2, use `dinov2` in those same three places: the conversion command,
 `export MODEL=dinov2` before the Docker command, and `MODEL=dinov2` before
 Uvicorn. The model selected in the application must match the OVMS model.
+
+For Depth Anything V2 Base, after stopping the previous deployment:
+
+```bash
+.venv/bin/python convert.py depth-base
+export MODEL=depth-base
+```
+
+Repeat only the `docker run` command in step 3, keeping `MODEL=depth-base`.
+After the readiness check returns HTTP 200, start the same application:
+
+```bash
+MODEL=depth-base .venv/bin/uvicorn app:app --host 0.0.0.0 --port 7860
+```
+
+Upload an image from another terminal and save the returned visualization:
+
+```bash
+curl -f http://127.0.0.1:7860/predict -F "file=@photo.jpg" --output depth.png
+```
+
+Open `depth.png` to view the result. For Depth Anything V2 Large, substitute
+`depth-large` in the conversion command, the `MODEL` export, and the Uvicorn
+command. Both models use the saved `keep_aspect_ratio=False` setting and
+produce `(1, 3, 518, 518)` input tensors for every uploaded image. This is
+necessary because the exported model has a fixed input shape.
 
 To stop, press **Ctrl+C** in the application terminal and run
 `docker stop cv-ovms`. The `--rm` option removes the stopped container; the
@@ -321,7 +396,7 @@ validation; earlier benchmark results do not validate this API.
 
 YOLO uses letterbox preprocessing and detection postprocessing, rather than
 the Hugging Face image processor and classification head. Keep it separate
-from the two-file classification/embedding implementation above.
+from the two-file classification, embedding, and depth implementation above.
 
 Stop the main application and `cv-ovms` before using the same ports below.
 Install the optional package (Ultralytics uses AGPL-3.0 or a commercial

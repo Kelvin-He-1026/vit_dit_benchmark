@@ -1,0 +1,153 @@
+Timestamp  : 20261110_112411
+Run code   : ov-layout
+Script     : server_dit_ov
+Backend    : openvino
+Model      : stabilityai/sdxl-turbo
+Dataset    : byliutao/coco2014val_10k (prompts)
+Device     : cpu
+Server     : ThinkSystem SR630 V4
+CPU        : Intel(R) Xeon(R) 6740P
+CPU cores  : 96 logical, 96 physical, 2 sockets
+GPU        : NVIDIA L4 x2
+Dtype      : bfloat16
+Resolution : 512x512
+Steps      : 4
+Seed       : 42
+OpenVINO   : openvino 2026.4.1, optimum-intel 2.2.0 (CPU plugin, fp16 weights, inference precision bf16, dynamic shapes, 1 stream per replica, pinned)
+OV weights : fp16
+Quant      : disabled
+Replicas   : 8
+Devices    : cpu
+CPU bind   : 0-47,48-95
+Threads    : 12
+Batch size : 1 (max)
+Batch wait : 0 ms
+Allocator  : default
+Workload   : interactive
+Think time : 30 s
+SLA        : p95 end-to-end <= 30 s
+Drop after : 2x SLA queued (60 s)
+Requests   : 30 scored + 10 warmup per level
+Calibrate  : 5 generations per replica
+Early stop : enabled
+OV model   : /home/lhe4/vit_dit_first_cut/models/openvino/stabilityai_sdxl-turbo/fp16
+Compile    : disabled (OpenVINO compiles the graph itself; torch.compile does not apply)
+  replica 0: cpu, 12 OpenVINO threads, 1 stream, bf16, pinning True, 12 cores visible
+  replica 1: cpu, 12 OpenVINO threads, 1 stream, bf16, pinning True, 12 cores visible
+  replica 2: cpu, 12 OpenVINO threads, 1 stream, bf16, pinning True, 12 cores visible
+  replica 3: cpu, 12 OpenVINO threads, 1 stream, bf16, pinning True, 12 cores visible
+  replica 4: cpu, 12 OpenVINO threads, 1 stream, bf16, pinning True, 12 cores visible
+  replica 5: cpu, 12 OpenVINO threads, 1 stream, bf16, pinning True, 12 cores visible
+  replica 6: cpu, 12 OpenVINO threads, 1 stream, bf16, pinning True, 12 cores visible
+  replica 7: cpu, 12 OpenVINO threads, 1 stream, bf16, pinning True, 12 cores visible
+  replica 0: warmed batch 1..1 in 4 s
+  replica 1: warmed batch 1..1 in 4 s
+  replica 2: warmed batch 1..1 in 4 s
+  replica 3: warmed batch 1..1 in 4 s
+  replica 4: warmed batch 1..1 in 4 s
+  replica 5: warmed batch 1..1 in 4 s
+  replica 6: warmed batch 1..1 in 4 s
+  replica 7: warmed batch 1..1 in 4 s
+
+=== CALIBRATION (batch 1, sequential, per replica) ===
+  replica 0: service mean 1.799 s  text 0.065  denoise 1.356  decode 0.377  jpeg 0.001
+  replica 1: service mean 1.826 s  text 0.086  denoise 1.353  decode 0.384  jpeg 0.002
+  replica 2: service mean 1.768 s  text 0.066  denoise 1.322  decode 0.378  jpeg 0.001
+  replica 3: service mean 1.803 s  text 0.088  denoise 1.333  decode 0.380  jpeg 0.002
+  replica 4: service mean 1.743 s  text 0.072  denoise 1.312  decode 0.357  jpeg 0.001
+  replica 5: service mean 1.796 s  text 0.099  denoise 1.324  decode 0.372  jpeg 0.001
+  replica 6: service mean 1.774 s  text 0.078  denoise 1.322  decode 0.372  jpeg 0.002
+  replica 7: service mean 1.783 s  text 0.088  denoise 1.326  decode 0.368  jpeg 0.001
+  service_mean_s      : 1.786
+  service_p95_s       : 1.835
+  service_cv2         : 0.0003
+  mu_rps              : 4.4783  (268.70 req/min, batch 1, all replicas)
+  images saved to     : /home/lhe4/vit_dit_first_cut/output_SR630_6740P_L4/server_dit_output/server_dit_ov_stabilityai_sdxl-turbo_bfloat16_cpu8r_20261110_112411_images
+Resource monitor: RAPL counters unreadable, CPU power disabled
+Monitor    : host=psutil device=off cpu_power=off every 1000 ms
+
+=== SWEEP ===
+->  134.350 req/min  rho= 0.50  40 arrivals, ~0 min unless stopped early
+   p50=   1.67  p95=   1.94  p99=   2.12 s  ok=30/30  drop=0  batch=1.00  thr=120.62 img/min  cap=286.54/min  PASS  ok
+->  188.089 req/min  rho= 0.70  40 arrivals, ~0 min unless stopped early
+   p50=   1.76  p95=   2.41  p99=   2.51 s  ok=30/30  drop=0  batch=1.00  thr=160.98 img/min  cap=278.93/min  PASS  ok
+->  228.394 req/min  rho= 0.85  40 arrivals, ~0 min unless stopped early
+   p50=   2.10  p95=   2.70  p99=   2.81 s  ok=30/30  drop=0  batch=1.00  thr=190.61 img/min  cap=276.00/min  PASS  ok
+->  268.699 req/min  rho= 1.00  40 arrivals, ~0 min unless stopped early
+   p50=   2.72  p95=   3.11  p99=   3.14 s  ok=30/30  drop=0  batch=1.00  thr=209.18 img/min  cap=274.41/min  PASS  ok
+->  322.439 req/min  rho= 1.20  40 arrivals, ~0 min unless stopped early
+   p50=   3.35  p95=   3.73  p99=   3.83 s  ok=30/30  drop=0  batch=1.00  thr=210.20 img/min  cap=274.20/min  FAIL  overloaded: offered 322.44/min >= measured capacity 274.20/min (rho 1.18); met the SLA only because the level ended
+->  294.345 req/min  rho= 1.10  40 arrivals, ~0 min unless stopped early
+   p50=   2.93  p95=   3.39  p99=   3.44 s  ok=30/30  drop=0  batch=1.00  thr=207.50 img/min  cap=274.26/min  FAIL  overloaded: offered 294.35/min >= measured capacity 274.26/min (rho 1.07); met the SLA only because the level ended
+->  281.230 req/min  rho= 1.05  40 arrivals, ~0 min unless stopped early
+   p50=   2.84  p95=   3.23  p99=   3.27 s  ok=30/30  drop=0  batch=1.00  thr=208.61 img/min  cap=274.67/min  FAIL  overloaded: offered 281.23/min >= measured capacity 274.67/min (rho 1.02); met the SLA only because the level ended
+
+=== RESULT ===
+sla_seconds             : 30
+sla_percentile          : 95
+workload                : interactive
+calibrated_mu_rps       : 4.47832
+calibrated_service_s    : 1.7864
+replica_rss_gib_max     : 14.23
+max_qps                 : 4.47832
+max_requests_per_minute : 268.699
+max_images_per_hour     : 16121.9
+rho_at_capacity         : 1.000
+service_capacity_rpm    : 274.406
+rho_measured            : 0.979
+steady_state_mean_ms    : 6658.7
+max_concurrent_inflight : 11.72
+think_time_s            : 30
+max_concurrent_users    : 146.1
+images_per_second       : 3.48635
+goodput_rps             : 3.48635
+sla_attainment_pct      : 100.0
+
+users by think time (Little's Law, same measurement):
+  think_time=  0.0s        :       11.7 users
+  think_time= 15.0s        :       78.9 users
+  think_time= 30.0s        :      146.1 users
+  think_time= 60.0s        :      280.4 users
+
+at the winning level:
+  requests_measured     : 30
+  dropped               : 0
+  p50_ms                : 2723.3
+  p90_ms                : 3044.1
+  p95_ms                : 3107.0
+  p99_ms                : 3139.4
+  max_ms                : 3140.1
+  avg_ms_per_image      : 2617.5
+  predicted_mean_ms     : inf
+  mean_batch_size       : 1.00
+  queue_depth_max       : 6
+  p95_drift             : x0.961
+
+  where the budget goes:
+    harness_lag_ms      : 1.8
+    queue_wait_ms       : 1325.2
+    inference_ms        : 1798.7
+    ipc_ms              : 0.7
+    text_encode_ms      : 66.5
+    denoise_ms          : 1325.3
+    vae_decode_ms       : 356.2
+    jpeg_encode_ms      : 1.1
+    (queue/inference/ipc/lag are p95; the four stages are means)
+
+  resources (9 samples over the window):
+    sys_cores_busy_mean : 89.02
+    sys_cores_busy_max  : 95.52
+    sys_cpu_pct_mean    : 92.7
+    rss_gib_max         : 0.57
+    total_rss_gib_max   : 114.46
+    power_source        : none
+
+=== LADDER ===
+  req/min   rho   p50 s   p95 s   p99 s  mean s  pred s  img/min attain% drop batch qmax  cores  gpu%      W  verdict
+  134.350  0.50    1.67    1.94    2.12    1.71    1.80   120.62   100.0    0  1.00    0   45.7     -      -  PASS ok
+  188.089  0.70    1.76    2.41    2.51    1.85    1.89   160.98   100.0    0  1.00    2   66.2     -      -  PASS ok
+  228.394  0.85    2.10    2.70    2.81    2.14    2.21   190.61   100.0    0  1.00    3   78.2     -      -  PASS ok
+  268.699  1.00    2.72    3.11    3.14    2.62     inf   209.18   100.0    0  1.00    6   89.0     -      -  PASS ok
+  281.230  1.05    2.84    3.23    3.27    2.77     inf   208.61   100.0    0  1.00    8   93.3     -      -  FAIL overloaded: offered 281.23/min >= measured capacity 274.67/min (rho 1.02); met the SLA only because the level ended
+  294.345  1.10    2.93    3.39    3.44    2.93     inf   207.50   100.0    0  1.00    7   89.7     -      -  FAIL overloaded: offered 294.35/min >= measured capacity 274.26/min (rho 1.07); met the SLA only because the level ended
+  322.439  1.20    3.35    3.73    3.83    3.23     inf   210.20   100.0    0  1.00    8   89.9     -      -  FAIL overloaded: offered 322.44/min >= measured capacity 274.20/min (rho 1.18); met the SLA only because the level ended

@@ -4,13 +4,15 @@ Web UI for the models served by OpenVINO Model Server (deploy/ovms/).
 
     bash deploy/ovms/start_ovms.sh google/vit-base-patch16-224 1 12 9100
     bash deploy/ovms/start_ovms.sh Ultralytics/yolo11m 1 8 9150
+    bash deploy/ovms/start_ovms.sh depth-anything/Depth-Anything-V2-Base-hf 1 16 9130
     ui_env/bin/python ui/app.py            # then open http://<server>:7860
 
-Three tabs:
+Four tabs:
   Classify    upload a photo, get the top-5 ImageNet classes (ViT-B, ViT-L,
               Swin-B or ResNet-50 - whichever model the endpoint serves)
   Similarity  upload two photos, get how alike DINOv2 finds them
   Detect      upload a photo, get it back with YOLO11m's boxes drawn on
+  Depth       upload a photo, get Depth Anything V2's depth map (Base or Large)
 
 The UI is a thin client. It runs in its own small environment (ui_env:
 gradio, numpy, pillow, requests - no PyTorch), does the image preprocessing
@@ -45,6 +47,7 @@ CLASSIFIERS = [
 ]
 DETECTOR = "Ultralytics/yolo11m"
 ENCODERS = ["facebook/dinov2-base", "facebook/dinov2-large"]
+DEPTH = ["depth-anything/Depth-Anything-V2-Base-hf", "depth-anything/Depth-Anything-V2-Large-hf"]
 
 # Where each model is expected by default: one server per model, each on its
 # own port (see the README's start commands). Editable in the UI.
@@ -56,6 +59,8 @@ PORTS = {
     "facebook/dinov2-base": 9120,
     "facebook/dinov2-large": 9125,
     DETECTOR: 9150,
+    DEPTH[0]: 9130,
+    DEPTH[1]: 9135,
 }
 
 
@@ -189,6 +194,26 @@ def decode_yolo(out, conf_threshold, iou_threshold):
     return [(boxes[k], int(cls[k]), float(score[k])) for k in keep[:100]]
 
 
+# Matplotlib's "inferno" at nine evenly spaced points (ui_env has no
+# matplotlib); np.interp fills in between. Dark = far, bright = near.
+INFERNO = np.array([
+    (0, 0, 4), (31, 12, 72), (85, 15, 109), (136, 34, 106), (186, 54, 85),
+    (227, 89, 51), (249, 140, 10), (249, 201, 50), (252, 255, 164)], np.float32)
+
+
+def colorize(depth, size, colormap):
+    """(H, W) relative depth -> RGB image of `size` (the photo's), min-max
+    scaled. Depth Anything outputs relative inverse depth: larger = nearer."""
+    d = np.asarray(Image.fromarray(depth.astype(np.float32), mode="F").resize(size, Image.BILINEAR))
+    lo, hi = np.percentile(d, 1), np.percentile(d, 99)   # ignore a few outliers
+    t = np.clip((d - lo) / max(hi - lo, 1e-6), 0, 1)
+    if colormap == "Grayscale":
+        return Image.fromarray((t * 255).astype(np.uint8), "L").convert("RGB")
+    pos = np.linspace(0, 1, len(INFERNO))
+    rgb = np.stack([np.interp(t, pos, INFERNO[:, c]) for c in range(3)], -1)
+    return Image.fromarray(rgb.astype(np.uint8), "RGB")
+
+
 # ---------------------------------------------------------------------------
 # The app
 # ---------------------------------------------------------------------------
@@ -201,12 +226,12 @@ def build(classify_endpoint=None, detect_endpoint=None, host="127.0.0.1"):
         overrides[DETECTOR] = detect_endpoint
 
     def scan():
-        """(available classifiers, encoders, detector?, endpoints) right now."""
+        """(available classifiers, encoders, detector?, depth models, endpoints) now."""
         found = available_models(host, overrides)
         return ([m for m in CLASSIFIERS if m in found], [m for m in ENCODERS if m in found],
-                DETECTOR in found, found)
+                DETECTOR in found, [m for m in DEPTH if m in found], found)
 
-    classifiers, encoders, has_detector, found = scan()
+    classifiers, encoders, has_detector, depths, found = scan()
     clients = {}
 
     def client(endpoint, model):
@@ -270,8 +295,21 @@ def build(classify_endpoint=None, detect_endpoint=None, host="127.0.0.1"):
                 f"Cosine similarity of the two {emb[0].size}-dimensional DINOv2 image "
                 f"embeddings (1 = identical). {ms:.1f} ms for both, at {endpoint}")
 
-    def status_text(cls, enc, det):
-        names = [m.split("/")[1] for m in cls + enc + ([DETECTOR] if det else [])]
+    def estimate_depth(image, model, colormap, endpoint):
+        if image is None:
+            raise gr.Error("upload an image first")
+        x = preprocess(image, sidecar(model, "preprocessor_config.json"))
+        t0 = time.perf_counter()
+        depth = client(endpoint, model).infer(x)[0]          # (518, 518)
+        ms = 1000 * (time.perf_counter() - t0)
+        photo = image.convert("RGB")
+        shown = colorize(depth, photo.size, colormap)
+        return ((photo, shown), shown,
+                f"{ms:.1f} ms round trip to {endpoint}. Relative depth: brighter is nearer; "
+                f"no units (Depth Anything V2 does not estimate metres).")
+
+    def status_text(cls, enc, det, dep):
+        names = [m.split("/")[1] for m in cls + enc + ([DETECTOR] if det else []) + dep]
         if not names:
             return ("**No model servers found.** Start them with "
                     "`deploy/ovms/start_ovms.sh` (see QUICKSTART_VIT.md), then click "
@@ -284,7 +322,7 @@ def build(classify_endpoint=None, detect_endpoint=None, host="127.0.0.1"):
     with gr.Blocks(title="Computer Vision Implementation") as app:
         gr.Markdown("## Computer Vision Implementation")
         with gr.Row():
-            status = gr.Markdown(status_text(classifiers, encoders, has_detector))
+            status = gr.Markdown(status_text(classifiers, encoders, has_detector, depths))
             refresh = gr.Button("Check servers", size="sm", scale=0)
         with gr.Tab("Classify", visible=bool(classifiers)) as c_tab:
             with gr.Row():
@@ -324,6 +362,23 @@ def build(classify_endpoint=None, detect_endpoint=None, host="127.0.0.1"):
             d_table = gr.Dataframe(headers=["class", "score", "x1", "y1", "x2", "y2"],
                                    label="Objects")
             d_btn.click(detect, [d_img, d_conf, d_iou, d_ep], [d_out, d_table, d_info])
+        with gr.Tab("Depth (Depth Anything V2)", visible=bool(depths)) as z_tab:
+            gr.Markdown("Estimates how far each pixel is from the camera, from a single "
+                        "photo. Drag the slider to compare the photo with its depth map.")
+            with gr.Row():
+                with gr.Column():
+                    z_img = gr.Image(type="pil", label="Image")
+                    z_model = gr.Dropdown(depths, value=first(depths), label="Model")
+                    z_cmap = gr.Radio(["Inferno", "Grayscale"], value="Inferno",
+                                      label="Colours")
+                    z_ep = gr.Textbox(found.get(first(depths), ""), label="Server endpoint")
+                    z_btn = gr.Button("Estimate depth", variant="primary")
+                with gr.Column():
+                    z_slider = gr.ImageSlider(type="pil", label="Photo | depth")
+                    z_info = gr.Markdown()
+            z_out = gr.Image(type="pil", label="Depth map", buttons=["download"])
+            z_btn.click(estimate_depth, [z_img, z_model, z_cmap, z_ep],
+                        [z_slider, z_out, z_info])
 
         # A model's endpoint follows the dropdown; the server list can be
         # re-checked without restarting the page.
@@ -332,21 +387,25 @@ def build(classify_endpoint=None, detect_endpoint=None, host="127.0.0.1"):
 
         c_model.change(pick, c_model, c_ep)
         s_model.change(pick, s_model, s_ep)
+        z_model.change(pick, z_model, z_ep)
 
         def rescan():
-            cls, enc, det, now = scan()
+            cls, enc, det, dep, now = scan()
             found.clear()
             found.update(now)
-            return (status_text(cls, enc, det),
+            return (status_text(cls, enc, det, dep),
                     gr.update(visible=bool(cls)),
                     gr.update(choices=cls, value=first(cls)), now.get(first(cls), ""),
                     gr.update(visible=bool(enc)),
                     gr.update(choices=enc, value=first(enc)), now.get(first(enc), ""),
-                    gr.update(visible=det), now.get(DETECTOR, ""))
+                    gr.update(visible=det), now.get(DETECTOR, ""),
+                    gr.update(visible=bool(dep)),
+                    gr.update(choices=dep, value=first(dep)), now.get(first(dep), ""))
 
         refresh.click(rescan, None, [status, c_tab, c_model, c_ep, s_tab, s_model, s_ep,
-                                     d_tab, d_ep])
-    return app, {"classify": classify, "detect": detect, "compare": compare, "rescan": rescan}
+                                     d_tab, d_ep, z_tab, z_model, z_ep])
+    return app, {"classify": classify, "detect": detect, "compare": compare,
+                 "depth": estimate_depth, "rescan": rescan}
 
 
 def main():

@@ -1,0 +1,53 @@
+Timestamp  : 20261110_103929
+Run code   : ov-probe
+Device     : cpu
+Backend    : openvino
+Allocator  : default
+Server     : ThinkSystem SR630 V4
+CPU        : Intel(R) Xeon(R) 6740P
+CPU cores  : 96 logical, 96 physical, 2 sockets
+GPU        : none
+Samples    : 16
+Resolution : per model (native)
+Warmup     : 1 untimed generation per cell
+Seed       : 42
+TF32       : disabled (matmul_precision=highest)
+Mode       : offline throughput sweep (no SLA, no arrival model)
+Batch size : sweep 1
+Replicas   : sweep 4
+Precisions : sweep bf16
+Measure    : 60 s per cell (floor; a generation is never cut short)
+Model      : black-forest-labs/FLUX.2-klein-4B
+Steps      : 4
+Resolution : 1024x1024
+Dtype      : bfloat16
+OpenVINO   : openvino 2026.4.1, optimum-intel 2.2.0 (CPU plugin, fp16 weights, inference precision bf16, dynamic shapes, 1 stream per replica, pinned)
+OV weights : fp16
+Quant      : disabled
+Compile    : disabled (OpenVINO compiles the graph itself)
+Devices    : cpu
+Threads    : 24 per replica
+
+=== SWEEP (images/s) ===
+replicas  batch     img/s    s/img  steps/s  denoise%   gpu%    gpuW  cores    cpuW   img/s/W
+       4      1     0.163    24.60     0.65      90.1      -       -   86.6       -         -
+
+=== RESULT ===
+images_per_second   : 0.162616
+avg_seconds_per_image: 24.5978
+denoising_steps_per_s: 0.650
+best_batch_size         : 1
+best_replicas           : 4
+images                  : 12
+measured_s              : 73.793
+denoise_s_per_image     : 22.1733
+other_s_per_image       : 2.4244
+denoise_pct             : 90.1
+
+at the best cell:
+  sys_cores_busy_mean   : 86.58
+  sys_cores_busy_max    : 92.35
+  sys_cpu_pct_mean      : 90.2
+  cpu_logical_count     : 96
+
+  power_source          : none - no NVML device, and the RAPL counters are not readable

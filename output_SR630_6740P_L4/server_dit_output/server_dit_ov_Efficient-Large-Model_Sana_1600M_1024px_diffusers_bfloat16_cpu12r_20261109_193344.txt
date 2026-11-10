@@ -1,0 +1,97 @@
+Timestamp  : 20261109_193344
+Run code   : ov-layout
+Script     : server_dit_ov
+Backend    : openvino
+Model      : Efficient-Large-Model/Sana_1600M_1024px_diffusers
+Dataset    : byliutao/coco2014val_10k (prompts)
+Device     : cpu
+Server     : ThinkSystem SR630 V4
+CPU        : Intel(R) Xeon(R) 6740P
+CPU cores  : 96 logical, 96 physical, 2 sockets
+GPU        : NVIDIA L4 x2
+Dtype      : bfloat16
+Resolution : 1024x1024
+Steps      : 20
+Seed       : 42
+OpenVINO   : openvino 2026.4.1, optimum-intel 2.2.0 (CPU plugin, fp16 weights, inference precision bf16, dynamic shapes, 1 stream per replica, pinned)
+OV weights : fp16
+Quant      : disabled
+Replicas   : 12
+Devices    : cpu
+CPU bind   : 0-47,48-95
+Threads    : 8
+Batch size : 1 (max)
+Batch wait : 0 ms
+Allocator  : default
+Workload   : interactive
+Think time : 30 s
+SLA        : p95 end-to-end <= 30 s
+Drop after : 2x SLA queued (60 s)
+Requests   : 30 scored + 10 warmup per level
+Calibrate  : 5 generations per replica
+Early stop : enabled
+OV model   : /home/lhe4/vit_dit_first_cut/models/openvino/Efficient-Large-Model_Sana_1600M_1024px_diffusers/fp16
+Compile    : disabled (OpenVINO compiles the graph itself; torch.compile does not apply)
+  replica 0: cpu, 8 OpenVINO threads, 1 stream, bf16, pinning True, 8 cores visible
+  replica 1: cpu, 8 OpenVINO threads, 1 stream, bf16, pinning True, 8 cores visible
+  replica 2: cpu, 8 OpenVINO threads, 1 stream, bf16, pinning True, 8 cores visible
+  replica 3: cpu, 8 OpenVINO threads, 1 stream, bf16, pinning True, 8 cores visible
+  replica 4: cpu, 8 OpenVINO threads, 1 stream, bf16, pinning True, 8 cores visible
+  replica 5: cpu, 8 OpenVINO threads, 1 stream, bf16, pinning True, 8 cores visible
+  replica 6: cpu, 8 OpenVINO threads, 1 stream, bf16, pinning True, 8 cores visible
+  replica 7: cpu, 8 OpenVINO threads, 1 stream, bf16, pinning True, 8 cores visible
+  replica 8: cpu, 8 OpenVINO threads, 1 stream, bf16, pinning True, 8 cores visible
+  replica 9: cpu, 8 OpenVINO threads, 1 stream, bf16, pinning True, 8 cores visible
+  replica 10: cpu, 8 OpenVINO threads, 1 stream, bf16, pinning True, 8 cores visible
+  replica 11: cpu, 8 OpenVINO threads, 1 stream, bf16, pinning True, 8 cores visible
+  replica 0: warmed batch 1..1 in 39 s
+  replica 1: warmed batch 1..1 in 38 s
+  replica 2: warmed batch 1..1 in 39 s
+  replica 3: warmed batch 1..1 in 38 s
+  replica 4: warmed batch 1..1 in 39 s
+  replica 5: warmed batch 1..1 in 38 s
+  replica 6: warmed batch 1..1 in 37 s
+  replica 7: warmed batch 1..1 in 37 s
+  replica 8: warmed batch 1..1 in 36 s
+  replica 9: warmed batch 1..1 in 37 s
+  replica 10: warmed batch 1..1 in 37 s
+  replica 11: warmed batch 1..1 in 37 s
+
+=== CALIBRATION (batch 1, sequential, per replica) ===
+  replica 0: service mean 37.408 s  text 1.007  denoise 33.418  decode 2.978  jpeg 0.004
+  replica 1: service mean 37.083 s  text 0.936  denoise 33.091  decode 3.051  jpeg 0.004
+  replica 2: service mean 37.459 s  text 1.114  denoise 33.322  decode 3.017  jpeg 0.004
+  replica 3: service mean 36.897 s  text 0.919  denoise 32.849  decode 3.126  jpeg 0.004
+  replica 4: service mean 37.237 s  text 1.014  denoise 33.217  decode 3.002  jpeg 0.004
+  replica 5: service mean 36.242 s  text 0.936  denoise 32.254  decode 3.047  jpeg 0.004
+  replica 6: service mean 35.502 s  text 1.001  denoise 31.512  decode 2.984  jpeg 0.004
+  replica 7: service mean 35.721 s  text 0.994  denoise 31.708  decode 3.014  jpeg 0.004
+  replica 8: service mean 34.950 s  text 0.943  denoise 31.089  decode 2.912  jpeg 0.004
+  replica 9: service mean 35.973 s  text 1.094  denoise 31.877  decode 2.996  jpeg 0.004
+  replica 10: service mean 35.717 s  text 0.950  denoise 31.779  decode 2.983  jpeg 0.004
+  replica 11: service mean 35.615 s  text 0.939  denoise 31.718  decode 2.954  jpeg 0.004
+  service_mean_s      : 36.317
+  service_p95_s       : 37.667
+  service_cv2         : 0.0006
+  mu_rps              : 0.3304  (19.83 req/min, batch 1, all replicas)
+  images saved to     : /home/lhe4/vit_dit_first_cut/output_SR630_6740P_L4/server_dit_output/server_dit_ov_Efficient-Large-Model_Sana_1600M_1024px_diffusers_bfloat16_cpu12r_20261109_193344_images
+Resource monitor: RAPL counters unreadable, CPU power disabled
+Monitor    : host=psutil device=off cpu_power=off every 1000 ms
+
+=== SWEEP ===
+skipped: calibration p95 service time 37.67 s already exceeds the 30 s SLA, so no arrival rate can pass (--force-sweep to measure anyway)
+
+=== RESULT ===
+sla_seconds             : 30
+sla_percentile          : 95
+workload                : interactive
+calibrated_mu_rps       : 0.33042
+calibrated_service_s    : 36.3170
+replica_rss_gib_max     : 16.89
+max_qps                 : 0
+max_requests_per_minute : 0
+max_concurrent_users    : 0
+verdict                 : SLA unmet at every level tried
+
+=== LADDER ===
+  req/min   rho   p50 s   p95 s   p99 s  mean s  pred s  img/min attain% drop batch qmax  cores  gpu%      W  verdict

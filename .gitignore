@@ -17,6 +17,7 @@ CACHEDIR.TAG
 # ---- Virtual environments ----
 cv_env/
 vllm_env/
+ov_env/
 ui_env/
 .venv/
 venv/
