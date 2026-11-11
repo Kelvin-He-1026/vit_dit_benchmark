@@ -27,6 +27,8 @@ MODELS = [
     "black-forest-labs/FLUX.2-klein-4B",
     # Z-Image-Turbo, ~6B, Apache 2.0.
     "Tongyi-MAI/Z-Image-Turbo",
+    # SD3.5-large distilled to 4 steps (8B), Stability community licence, gated.
+    "stabilityai/stable-diffusion-3.5-large-turbo",
 ]
 
 # Models that need something beyond `pip install -r requirements.txt` before
@@ -35,6 +37,7 @@ MODELS = [
 GATED = {
     "stabilityai/stable-diffusion-3.5-medium",
     "stabilityai/stable-diffusion-3.5-large",
+    "stabilityai/stable-diffusion-3.5-large-turbo",
 }
 
 # Denoising steps when --steps is not given. Sana-Sprint is step-distilled: it
@@ -47,6 +50,7 @@ MODEL_STEPS = {
     "stabilityai/sdxl-turbo": 4,             # card: 1-4; 4 is the best quality
     "black-forest-labs/FLUX.2-klein-4B": 4,  # card: 4
     "Tongyi-MAI/Z-Image-Turbo": 9,           # card: 9 (= 8 transformer passes)
+    "stabilityai/stable-diffusion-3.5-large-turbo": 4,  # card: 4
 }
 
 # Guidance the distilled models are trained for. Every pipeline's own default
@@ -56,6 +60,7 @@ MODEL_GUIDANCE = {
     "stabilityai/sdxl-turbo": 0.0,
     "black-forest-labs/FLUX.2-klein-4B": 1.0,
     "Tongyi-MAI/Z-Image-Turbo": 0.0,
+    "stabilityai/stable-diffusion-3.5-large-turbo": 0.0,
 }
 
 # Native resolution when --height/--width are not given. SDXL-Turbo is
